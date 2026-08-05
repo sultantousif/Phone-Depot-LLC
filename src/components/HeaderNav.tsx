@@ -19,7 +19,8 @@ import {
   Tablet,
   Cpu as SimCardIcon,
   Headphones,
-  Box
+  Box,
+  SlidersHorizontal
 } from 'lucide-react';
 import { AdminView, User } from '../types';
 
@@ -63,7 +64,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 
   const isAccountActive = ['invoices', 'payments', 'invoices-search', 'payment-search', 'add-member', 'manage-members'].includes(activeView);
   const isOrdersActive = ['place-new-order', 'view-previous-order', 'view-open-order', 'search-order'].includes(activeView);
-  const isShoppingActive = ['metro-phones', 'display-phones', 'sim-cards', 'accessories', 'supplies'].includes(activeView);
+  const isShoppingActive = ['shop-settings', 'metro-phones', 'display-phones', 'sim-cards', 'accessories', 'supplies'].includes(activeView);
 
   return (
     <header className="sticky top-0 z-40 bg-slate-900 border-b border-slate-800 shadow-md" ref={navRef}>
@@ -383,6 +384,30 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                     <Box className="w-3.5 h-3.5 text-slate-400" />
                     <span>Supplies</span>
                   </button>
+
+                  {/* Admin Only: Shop Settings button placed under catalog categories */}
+                  {user.role === 'admin' && (
+                    <>
+                      <div className="my-1 border-t border-slate-100" />
+                      <button
+                        onClick={() => handleSelect('shop-settings')}
+                        id="menu-item-shop-settings"
+                        className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 rounded-b-lg transition-colors ${
+                          activeView === 'shop-settings'
+                            ? 'text-purple-700 font-bold bg-purple-50'
+                            : 'text-slate-800 hover:bg-purple-50 hover:text-purple-700'
+                        }`}
+                      >
+                        <div className="p-1 rounded bg-purple-100 text-purple-700">
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="block leading-tight font-bold">Shop Settings</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Pictures, inventory stock & member visibility</span>
+                        </div>
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -492,6 +517,18 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               <button onClick={() => handleSelect('sim-cards')} className="w-full text-left pl-6 py-1.5 text-xs text-slate-300 hover:text-white">Sim Cards</button>
               <button onClick={() => handleSelect('accessories')} className="w-full text-left pl-6 py-1.5 text-xs text-slate-300 hover:text-white">Accessories</button>
               <button onClick={() => handleSelect('supplies')} className="w-full text-left pl-6 py-1.5 text-xs text-slate-300 hover:text-white">Supplies</button>
+              {user.role === 'admin' && (
+                <button 
+                  id="mobile-menu-item-shop-settings"
+                  onClick={() => handleSelect('shop-settings')} 
+                  className={`w-full text-left pl-6 py-1.5 text-xs font-bold flex items-center gap-2 ${
+                    activeView === 'shop-settings' ? 'text-purple-400 font-extrabold' : 'text-purple-400 hover:text-purple-300'
+                  }`}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Shop Settings</span>
+                </button>
+              )}
             </div>
           </div>
 

@@ -6,7 +6,9 @@ import {
   OrderItem,
   InvoiceItem,
   PaymentItem,
-  InvoiceTitle
+  InvoiceTitle,
+  OrderStatus,
+  ProductItem
 } from '../types';
 import { 
   SAMPLE_PRODUCTS,
@@ -14,6 +16,8 @@ import {
   INITIAL_MEMBERS,
   SAMPLE_PAYMENTS
 } from '../data/sampleData';
+import { ShopSettingsManager } from './ShopSettingsManager';
+import { loadStoredProducts, PRODUCTS_UPDATED_EVENT } from '../utils/productUtils';
 import { 
   Search, 
   FileText, 
@@ -67,6 +71,7 @@ import {
   ChevronDown,
   Sparkles
 } from 'lucide-react';
+import { downloadInvoicePdf, printOrDownloadInvoicePdf } from '../utils/generateInvoicePdf';
 
 const US_STATES = [
   { code: 'AL', name: 'Alabama' },
@@ -167,7 +172,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   useEffect(() => {
     localStorage.setItem('distro_invoices', JSON.stringify(invoices));
-    window.dispatchEvent(new Event('storage'));
   }, [invoices]);
 
   // Dynamic Payments State (persisted locally, initial sample payments if empty)
@@ -186,7 +190,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   useEffect(() => {
     localStorage.setItem('distro_payments', JSON.stringify(payments));
-    window.dispatchEvent(new Event('storage'));
   }, [payments]);
 
   // Dynamic Team Members State (persisted locally, initial sample members if empty)
@@ -205,7 +208,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   useEffect(() => {
     localStorage.setItem('distro_team_members', JSON.stringify(members));
-    window.dispatchEvent(new Event('storage'));
   }, [members]);
 
   // Create Invoice Modal & Form State
@@ -269,6 +271,21 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       setActiveMemberTab('add');
     }
   }, [activeView]);
+
+  // Dynamic Products State (persisted locally with pictures, stock & member-specific visibility)
+  const [products, setProducts] = useState<ProductItem[]>(() => loadStoredProducts());
+
+  useEffect(() => {
+    const handleProductsUpdated = () => {
+      setProducts(loadStoredProducts());
+    };
+    window.addEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
+    window.addEventListener('storage', handleProductsUpdated);
+    return () => {
+      window.removeEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
+      window.removeEventListener('storage', handleProductsUpdated);
+    };
+  }, []);
 
   // Add Member Form State
   const [memberName, setMemberName] = useState('');
@@ -354,21 +371,31 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }, 4500);
   };
 
-  // Real-time synchronization with localStorage
+  // Real-time synchronization with localStorage (guarded against redundant re-renders)
   useEffect(() => {
     const handleStorageChange = () => {
       try {
         const savedOrders = localStorage.getItem('distro_orders');
-        if (savedOrders) setOrders(JSON.parse(savedOrders));
+        if (savedOrders) {
+          setOrders((prev) => (JSON.stringify(prev) !== savedOrders ? JSON.parse(savedOrders) : prev));
+        }
         const savedInvoices = localStorage.getItem('distro_invoices');
-        if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
+        if (savedInvoices) {
+          setInvoices((prev) => (JSON.stringify(prev) !== savedInvoices ? JSON.parse(savedInvoices) : prev));
+        }
+        const savedPayments = localStorage.getItem('distro_payments');
+        if (savedPayments) {
+          setPayments((prev) => (JSON.stringify(prev) !== savedPayments ? JSON.parse(savedPayments) : prev));
+        }
         const savedMembers = localStorage.getItem('distro_team_members');
-        if (savedMembers) setMembers(JSON.parse(savedMembers));
+        if (savedMembers) {
+          setMembers((prev) => (JSON.stringify(prev) !== savedMembers ? JSON.parse(savedMembers) : prev));
+        }
         const savedMasterLimit = localStorage.getItem('distro_master_credit_limit');
         if (savedMasterLimit !== null) {
           const parsed = Number(savedMasterLimit);
           if (!isNaN(parsed)) {
-            setMasterCreditLimit(parsed);
+            setMasterCreditLimit((prev) => (prev !== parsed ? parsed : prev));
           }
         }
       } catch (e) {
@@ -413,7 +440,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }
 
     setIsMasterCreditModalOpen(false);
-    window.dispatchEvent(new Event('storage'));
     setTimeout(() => {
       setMasterLimitFeedback(null);
     }, 7000);
@@ -430,7 +456,18 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   const [orderActionFeedback, setOrderActionFeedback] = useState<string | null>(null);
 
   const handleOpenOrderReview = (order: OrderItem) => {
-    setAdminReviewingOrder(order);
+    const clonedItems = order.items ? order.items.map((it) => ({ ...it })) : [];
+    const origItems = order.originalItems && order.originalItems.length > 0 
+      ? order.originalItems.map((it) => ({ ...it })) 
+      : clonedItems.map((it) => ({ ...it }));
+    
+    setAdminReviewingOrder({
+      ...order,
+      items: clonedItems,
+      originalItems: origItems,
+      originalSubtotal: order.originalSubtotal !== undefined ? order.originalSubtotal : (order.subtotal || order.total || 0),
+    });
+
     setAdminShippingFee(order.shippingFee !== undefined ? order.shippingFee.toFixed(2) : '15.00');
     const baseSubtotal = order.subtotal || order.total || 0;
     const calcTax = order.salesTax !== undefined ? order.salesTax.toFixed(2) : (baseSubtotal * 0.0825).toFixed(2);
@@ -446,6 +483,74 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setShowDeclineConfirm(false);
   };
 
+  // Helper to remove an item from reviewing order
+  const handleRemoveItemFromReview = (indexToRemove: number) => {
+    if (!adminReviewingOrder || !adminReviewingOrder.items) return;
+    const currentItems = [...adminReviewingOrder.items];
+    const updatedItems = currentItems.filter((_, idx) => idx !== indexToRemove);
+    const newSubtotal = updatedItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+    const newItemsCount = updatedItems.reduce((sum, it) => sum + it.qty, 0);
+
+    const origItems = adminReviewingOrder.originalItems || (adminReviewingOrder.items ? adminReviewingOrder.items.map(it => ({ ...it })) : []);
+
+    setAdminReviewingOrder({
+      ...adminReviewingOrder,
+      items: updatedItems,
+      itemsCount: newItemsCount,
+      subtotal: newSubtotal,
+      itemsModifiedByAdmin: true,
+      originalItems: origItems,
+      originalSubtotal: adminReviewingOrder.originalSubtotal || (adminReviewingOrder.subtotal || adminReviewingOrder.total || 0),
+    });
+
+    // Auto-adjust sales tax to new subtotal
+    setAdminSalesTax((newSubtotal * 0.0825).toFixed(2));
+  };
+
+  // Helper to adjust quantity of an item in reviewing order
+  const handleUpdateItemQtyInReview = (indexToUpdate: number, newQty: number) => {
+    if (!adminReviewingOrder || !adminReviewingOrder.items) return;
+    if (newQty <= 0) {
+      handleRemoveItemFromReview(indexToUpdate);
+      return;
+    }
+    const updatedItems = adminReviewingOrder.items.map((it, idx) =>
+      idx === indexToUpdate ? { ...it, qty: newQty } : it
+    );
+    const newSubtotal = updatedItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+    const newItemsCount = updatedItems.reduce((sum, it) => sum + it.qty, 0);
+
+    setAdminReviewingOrder({
+      ...adminReviewingOrder,
+      items: updatedItems,
+      itemsCount: newItemsCount,
+      subtotal: newSubtotal,
+      itemsModifiedByAdmin: true,
+      originalItems: adminReviewingOrder.originalItems || (adminReviewingOrder.items ? adminReviewingOrder.items.map(it => ({ ...it })) : []),
+      originalSubtotal: adminReviewingOrder.originalSubtotal || (adminReviewingOrder.subtotal || adminReviewingOrder.total || 0),
+    });
+
+    setAdminSalesTax((newSubtotal * 0.0825).toFixed(2));
+  };
+
+  // Helper to reset items back to original submitted state
+  const handleResetItemsInReview = () => {
+    if (!adminReviewingOrder || !adminReviewingOrder.originalItems) return;
+    const restoredItems = adminReviewingOrder.originalItems.map(it => ({ ...it }));
+    const newSubtotal = restoredItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+    const newItemsCount = restoredItems.reduce((sum, it) => sum + it.qty, 0);
+
+    setAdminReviewingOrder({
+      ...adminReviewingOrder,
+      items: restoredItems,
+      itemsCount: newItemsCount,
+      subtotal: newSubtotal,
+      itemsModifiedByAdmin: false,
+    });
+
+    setAdminSalesTax((newSubtotal * 0.0825).toFixed(2));
+  };
+
   const parsedShipping = parseFloat(adminShippingFee);
   const parsedSalesTax = parseFloat(adminSalesTax);
   const parsedServiceTax = parseFloat(adminServiceTax);
@@ -456,8 +561,21 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   const areAllThreeFeesFilled = isShippingValid && isSalesTaxValid && isServiceTaxValid;
 
-  const currentOrderSubtotal = adminReviewingOrder ? (adminReviewingOrder.subtotal || adminReviewingOrder.total || 0) : 0;
+  const currentOrderSubtotal = adminReviewingOrder ? (adminReviewingOrder.subtotal !== undefined ? adminReviewingOrder.subtotal : (adminReviewingOrder.total || 0)) : 0;
   const adminCalculatedGrandTotal = currentOrderSubtotal + (isShippingValid ? parsedShipping : 0) + (isSalesTaxValid ? parsedSalesTax : 0) + (isServiceTaxValid ? parsedServiceTax : 0);
+
+  // Check if items have been modified from original
+  const isItemsModifiedByAdmin = Boolean(
+    adminReviewingOrder?.itemsModifiedByAdmin ||
+    (adminReviewingOrder?.originalItems &&
+     adminReviewingOrder.items &&
+     (adminReviewingOrder.items.length !== adminReviewingOrder.originalItems.length ||
+      adminReviewingOrder.itemsCount !== adminReviewingOrder.originalItems.reduce((s, it) => s + it.qty, 0) ||
+      adminReviewingOrder.items.some((it, idx) => {
+        const orig = adminReviewingOrder.originalItems?.[idx];
+        return !orig || orig.productId !== it.productId || orig.qty !== it.qty || orig.price !== it.price;
+      })))
+  );
 
   const handleDeclineOrderFulfillment = () => {
     if (!adminReviewingOrder || !areAllThreeFeesFilled) return;
@@ -484,26 +602,44 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
     setOrders(updated);
     localStorage.setItem('distro_orders', JSON.stringify(updated));
-    setOrderActionFeedback(`Order #${adminReviewingOrder.orderNumber} has been DECLINED (Reason: ${finalReason}). Member order status updated in real-time.`);
+    window.dispatchEvent(new CustomEvent('distro_storage_updated'));
+    setOrderActionFeedback(`Order #${adminReviewingOrder.orderNumber} has been DECLINED (Reason: ${finalReason}). Status updated to "Declined by Admin".`);
     setAdminReviewingOrder(null);
     setShowDeclineConfirm(false);
     setTimeout(() => setOrderActionFeedback(null), 8000);
   };
 
-  const handleSubmitToMemberForReview = () => {
+  const handleApproveOrderFulfillment = () => {
     if (!adminReviewingOrder || !areAllThreeFeesFilled) return;
+    if (!adminReviewingOrder.items || adminReviewingOrder.items.length === 0 || adminReviewingOrder.itemsCount === 0) {
+      alert("Cannot approve an order with 0 items. Please add items or decline the order.");
+      return;
+    }
+
+    const finalStatus: OrderStatus = isItemsModifiedByAdmin
+      ? 'Updated and Approved'
+      : 'Approved';
+
+    const orderTotal = adminCalculatedGrandTotal;
 
     const updated = orders.map((ord) => {
       if (ord.id === adminReviewingOrder.id) {
         return {
           ...ord,
+          items: adminReviewingOrder.items,
+          itemsCount: adminReviewingOrder.itemsCount,
+          subtotal: currentOrderSubtotal,
           shippingFee: parsedShipping,
           salesTax: parsedSalesTax,
           serviceTax: parsedServiceTax,
-          total: adminCalculatedGrandTotal,
-          status: 'Ready for Member Review & Acceptance' as const,
-          adminDecision: 'submitted_to_member' as const,
+          total: orderTotal,
+          status: finalStatus,
+          itemsModifiedByAdmin: isItemsModifiedByAdmin,
+          originalItems: adminReviewingOrder.originalItems || ord.items,
+          originalSubtotal: adminReviewingOrder.originalSubtotal || ord.subtotal || ord.total,
+          adminDecision: isItemsModifiedByAdmin ? ('approved_with_changes' as const) : ('approved' as const),
           adminReviewedAt: new Date().toISOString(),
+          paymentStatus: 'Credit Allocated' as const,
         };
       }
       return ord;
@@ -511,7 +647,44 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
     setOrders(updated);
     localStorage.setItem('distro_orders', JSON.stringify(updated));
-    setOrderActionFeedback(`Order #${adminReviewingOrder.orderNumber} updated with Shipping ($${parsedShipping.toFixed(2)}), Sales Tax ($${parsedSalesTax.toFixed(2)}), Service Tax ($${parsedServiceTax.toFixed(2)}) and SUBMITTED TO MEMBER for review and acceptance!`);
+    window.dispatchEvent(new CustomEvent('distro_storage_updated'));
+
+    // Auto-generate or update invoice in distro_invoices for the member
+    const newInvoice: InvoiceItem = {
+      invoiceNumber: `INV-${adminReviewingOrder.orderNumber.replace('ORD-', '')}`,
+      orderNumber: adminReviewingOrder.orderNumber,
+      title: 'Product Purchase Order',
+      memberUsername: adminReviewingOrder.memberUsername,
+      customerName: adminReviewingOrder.customerName,
+      billedTo: adminReviewingOrder.customerName,
+      date: new Date().toISOString().split('T')[0],
+      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      amount: orderTotal,
+      status: 'Paid',
+      method: 'Allocated Credit Line',
+      notes: isItemsModifiedByAdmin
+        ? 'Order updated and approved by Admin.'
+        : 'Order approved by Admin.',
+    };
+
+    try {
+      const currentInvoices: InvoiceItem[] = JSON.parse(localStorage.getItem('distro_invoices') || '[]');
+      const existingIndex = currentInvoices.findIndex((inv) => inv.orderNumber === adminReviewingOrder.orderNumber);
+      let updatedInvoices: InvoiceItem[];
+      if (existingIndex >= 0) {
+        updatedInvoices = currentInvoices.map((inv, idx) => idx === existingIndex ? newInvoice : inv);
+      } else {
+        updatedInvoices = [newInvoice, ...currentInvoices];
+      }
+      setInvoices(updatedInvoices);
+      localStorage.setItem('distro_invoices', JSON.stringify(updatedInvoices));
+    } catch (err) {
+      console.error('Invoice sync error:', err);
+    }
+
+    setOrderActionFeedback(
+      `Order #${adminReviewingOrder.orderNumber} has been ${isItemsModifiedByAdmin ? 'UPDATED AND APPROVED' : 'APPROVED'}! Total: $${orderTotal.toFixed(2)} (Shipping: $${parsedShipping.toFixed(2)}, Tax: $${parsedSalesTax.toFixed(2)}, Service: $${parsedServiceTax.toFixed(2)}). Live status updated to "${finalStatus}".`
+    );
     setAdminReviewingOrder(null);
     setTimeout(() => setOrderActionFeedback(null), 8000);
   };
@@ -761,9 +934,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   // Order status advancement handler
   const handleUpdateOrderStatus = (orderId: string, status: 'Open' | 'Processing' | 'Shipped' | 'Completed' | 'Cancelled') => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status } : o))
-    );
+    const updated = orders.map((o) => (o.id === orderId ? { ...o, status } : o));
+    setOrders(updated);
+    localStorage.setItem('distro_orders', JSON.stringify(updated));
+    window.dispatchEvent(new CustomEvent('distro_storage_updated'));
   };
 
   // Handlers for adding member
@@ -931,42 +1105,76 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   // Render Product Section Helper
   const renderProductGrid = (categoryKey: string, categoryTitle: string, categoryIcon: React.ReactNode) => {
-    const products = SAMPLE_PRODUCTS.filter((p) => p.category === categoryKey);
+    const categoryProducts = products.filter((p) => p.category === categoryKey);
 
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-4 gap-3">
           <div className="flex items-center space-x-3">
             <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100">
               {categoryIcon}
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900 tracking-tight">{categoryTitle}</h2>
-              <p className="text-xs text-slate-500">Showing {products.length} active distribution catalog items</p>
+              <p className="text-xs text-slate-500">Showing {categoryProducts.length} active distribution catalog items</p>
             </div>
           </div>
-          <button
-            onClick={() => onNavigate('place-new-order')}
-            className="px-3.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1.5 border border-blue-200"
-          >
-            <PlusCircle className="w-4 h-4" /> Go to Order Form
-          </button>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => onNavigate('shop-settings')}
+              id={`admin-shop-settings-btn-${categoryKey}`}
+              className="px-3.5 py-2 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors flex items-center gap-1.5 border border-purple-200 cursor-pointer shadow-2xs"
+            >
+              <SlidersHorizontal className="w-4 h-4 text-purple-600" /> Shop Settings
+            </button>
+            <button
+              onClick={() => onNavigate('place-new-order')}
+              className="px-3.5 py-2 text-xs font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors flex items-center gap-1.5 border border-blue-200 cursor-pointer"
+            >
+              <PlusCircle className="w-4 h-4" /> Go to Order Form
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {products.map((item) => (
+          {categoryProducts.map((item) => (
             <div
               key={item.id}
               className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
             >
               <div>
+                {/* Product Image / Device Photo */}
+                {item.image && (
+                  <div className="mb-4 h-44 w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-100 flex items-center justify-center p-2">
+                    <img 
+                      src={item.image} 
+                      alt={item.name} 
+                      referrerPolicy="no-referrer"
+                      className="max-h-full max-w-full object-contain hover:scale-105 transition-transform duration-200" 
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-start justify-between mb-3">
                   <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md text-[10px] font-mono font-bold uppercase border border-slate-200">
                     SKU: {item.sku}
                   </span>
-                  <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                    In Stock ({item.stock})
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {item.visibilityMode && item.visibilityMode !== 'all' && (
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                        item.visibilityMode === 'hidden' 
+                          ? 'bg-rose-50 text-rose-700 border-rose-200' 
+                          : item.visibilityMode === 'selected_members' 
+                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
+                          : 'bg-amber-50 text-amber-700 border-amber-200'
+                      }`}>
+                        {item.visibilityMode === 'hidden' ? 'Hidden' : item.visibilityMode === 'selected_members' ? 'Selected Members' : 'Custom Rules'}
+                      </span>
+                    )}
+                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      In Stock ({item.stock})
+                    </span>
+                  </div>
                 </div>
 
                 <h3 className="text-base font-bold text-slate-900 mb-1 leading-snug">{item.name}</h3>
@@ -989,18 +1197,38 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   <span className="text-[10px] text-slate-400 uppercase font-bold block">Wholesale Price</span>
                   <span className="text-lg font-extrabold text-slate-900">${item.price.toFixed(2)}</span>
                 </div>
-                <button
-                  onClick={() => {
-                    addToCart(item.id);
-                    onNavigate('place-new-order');
-                  }}
-                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
-                >
-                  <PlusCircle className="w-3.5 h-3.5" /> Add to Order
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => onNavigate('shop-settings')}
+                    className="p-2 text-slate-500 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors border border-slate-200 cursor-pointer"
+                    title="Configure Device Image, Inventory & Member Visibility"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      addToCart(item.id);
+                      onNavigate('place-new-order');
+                    }}
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" /> Add to Order
+                  </button>
+                </div>
               </div>
             </div>
           ))}
+          {categoryProducts.length === 0 && (
+            <div className="col-span-full p-12 bg-white border border-slate-200 rounded-xl text-center">
+              <p className="text-sm font-semibold text-slate-700">No items found in this category.</p>
+              <button
+                onClick={() => onNavigate('shop-settings')}
+                className="mt-3 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <PlusCircle className="w-4 h-4" /> Add Item in Shop Settings
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2840,9 +3068,21 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                           )}
                           <button 
                             type="button"
+                            onClick={() => {
+                              const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                              downloadInvoicePdf({ invoice: inv, order: matchingOrder });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs" 
+                            title="Print / Download PDF Invoice"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Print PDF</span>
+                          </button>
+                          <button 
+                            type="button"
                             onClick={() => setViewingInvoice(inv)}
                             className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors inline-flex cursor-pointer" 
-                            title="View Statement & Print"
+                            title="View Statement"
                           >
                             <FileText className="w-4 h-4" />
                           </button>
@@ -3027,7 +3267,19 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                           {inv.status}
                         </span>
                       </td>
-                      <td className="p-3 text-right">
+                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                            downloadInvoicePdf({ invoice: inv, order: matchingOrder });
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="Print / Download PDF"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Print PDF</span>
+                        </button>
                         <button
                           type="button"
                           onClick={() => setViewingInvoice(inv)}
@@ -3126,7 +3378,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     case 'place-new-order':
       const cartItemsWithDetails = orderCart.map((item) => ({
         ...item,
-        product: SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
+        product: products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
       })).filter((item) => item.product);
 
       const cartTotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
@@ -3143,6 +3395,12 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 <p className="text-xs text-slate-500">Select distribution items and submit store purchase orders</p>
               </div>
             </div>
+            <button
+              onClick={() => onNavigate('shop-settings')}
+              className="px-3.5 py-2 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors flex items-center gap-1.5 border border-purple-200 cursor-pointer shadow-2xs"
+            >
+              <SlidersHorizontal className="w-4 h-4 text-purple-600" /> Shop Settings
+            </button>
           </div>
 
           {orderSubmittedMsg && (
@@ -3154,7 +3412,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => onNavigate('view-open-order')}
-                  className="px-2.5 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold hover:bg-emerald-700 transition-colors"
+                  className="px-2.5 py-1 bg-emerald-600 text-white rounded text-[11px] font-bold hover:bg-emerald-700 transition-colors cursor-pointer"
                 >
                   View Open Orders
                 </button>
@@ -3171,16 +3429,26 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               </div>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {SAMPLE_PRODUCTS.map((item) => (
-                  <div key={item.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex items-center justify-between hover:border-blue-200 transition-all">
-                    <div className="pr-2">
-                      <span className="text-[10px] font-mono font-bold text-slate-400 block">{item.sku}</span>
+                {products.map((item) => (
+                  <div key={item.id} className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between hover:border-blue-200 transition-all gap-3">
+                    {item.image && (
+                      <div className="w-12 h-12 shrink-0 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center p-1 overflow-hidden">
+                        <img src={item.image} alt={item.name} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0 pr-1">
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span className="text-[10px] font-mono font-bold text-slate-400 block">{item.sku}</span>
+                        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded">
+                          Stock: {item.stock}
+                        </span>
+                      </div>
                       <h4 className="font-bold text-slate-900 text-xs line-clamp-1">{item.name}</h4>
                       <span className="text-xs font-bold text-blue-600">${item.price.toFixed(2)}</span>
                     </div>
                     <button
                       onClick={() => addToCart(item.id)}
-                      className="p-2 bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white rounded-lg transition-colors border border-blue-100 shrink-0"
+                      className="p-2 bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white rounded-lg transition-colors border border-blue-100 shrink-0 cursor-pointer"
                       title="Add to order"
                     >
                       <PlusCircle className="w-4 h-4" />
@@ -3403,7 +3671,9 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       const isPendingAdmin = ord.status === 'Pending review and approval by Admin';
                       const isSubmittedToMember = ord.status === 'Ready for Member Review & Acceptance';
                       const isDeclined = ord.status === 'Declined by Admin';
-                      const isApproved = ord.status === 'Approved & Processing' || ord.status === 'Open' || ord.status === 'Processing';
+                      const isUpdatedAndApproved = ord.status === 'Updated and Approved' || ord.status === 'Approved with changes by Admin';
+                      const isApprovedOnly = ord.status === 'Approved' || ord.status === 'Approved by Admin';
+                      const isApproved = isUpdatedAndApproved || isApprovedOnly || ord.status === 'Approved & Processing' || ord.status === 'Open' || ord.status === 'Processing';
 
                       const subtotal = ord.subtotal || ord.total;
                       const hasFees = (ord.shippingFee !== undefined && ord.shippingFee > 0) ||
@@ -3449,6 +3719,18 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                                 Pending Admin Review
                               </span>
                             )}
+                            {isUpdatedAndApproved && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold whitespace-nowrap">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                Updated and Approved
+                              </span>
+                            )}
+                            {isApprovedOnly && (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold whitespace-nowrap">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                Approved
+                              </span>
+                            )}
                             {isSubmittedToMember && (
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full text-[10px] font-bold whitespace-nowrap">
                                 <Send className="w-3 h-3 text-blue-500" />
@@ -3461,7 +3743,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                                 Declined by Admin
                               </span>
                             )}
-                            {isApproved && (
+                            {isApproved && !isUpdatedAndApproved && !isApprovedOnly && (
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold whitespace-nowrap">
                                 <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                                 Approved / In Process
@@ -3570,7 +3852,28 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       <td className="p-3">{ord.customerName}</td>
                       <td className="p-3">{ord.date}</td>
                       <td className="p-3 font-bold text-slate-900">${ord.total.toFixed(2)}</td>
-                      <td className="p-3 font-bold text-slate-700">{ord.status}</td>
+                      <td className="p-3">
+                        {ord.status === 'Updated and Approved' || ord.status === 'Approved with changes by Admin' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold whitespace-nowrap">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Updated and Approved
+                          </span>
+                        ) : ord.status === 'Approved' || ord.status === 'Approved by Admin' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold whitespace-nowrap">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Approved
+                          </span>
+                        ) : ord.status === 'Pending review and approval by Admin' ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-300 rounded-full text-[10px] font-bold whitespace-nowrap">
+                            <Clock className="w-3 h-3 text-amber-600" />
+                            Pending Admin Review
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-full text-[10px] font-bold">
+                            {ord.status}
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {filteredOrders.length === 0 && (
@@ -3590,6 +3893,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       );
 
     // Shopping Category Views
+    case 'shop-settings':
+      return (
+        <ShopSettingsManager
+          onNavigateToCategory={(cat) => onNavigate(cat as AdminView)}
+          onNavigateToOrder={() => onNavigate('place-new-order')}
+        />
+      );
+
     case 'metro-phones':
       return renderProductGrid('metro-phones', 'Metro By T-Mobile Phones', <Smartphone className="w-6 h-6" />);
 
@@ -3691,12 +4002,42 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 </div>
               </div>
 
-              {/* Order Items Table */}
+              {/* Order Items Table with Edit / Remove Controls */}
               <div>
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Order Items Breakdown ({adminReviewingOrder.itemsCount} Total Units)
-                </h4>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Order Items Breakdown ({adminReviewingOrder.itemsCount} Total Units)
+                  </h4>
+                  {isItemsModifiedByAdmin && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-300 inline-flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 text-amber-700" />
+                        <span>Items Modified by Admin</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResetItemsInReview}
+                        className="text-[11px] font-semibold text-slate-600 hover:text-blue-600 underline cursor-pointer"
+                        title="Restore original items requested by member"
+                      >
+                        Reset to Original
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {isItemsModifiedByAdmin && (
+                  <div className="mb-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-900 text-xs font-medium flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        Item list or quantities have been modified. When approved, the live order status will be set to <strong className="font-bold text-amber-950">"Updated and Approved"</strong>.
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
                       <tr>
@@ -3705,6 +4046,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         <th className="p-3">Unit Price</th>
                         <th className="p-3">Qty</th>
                         <th className="p-3 text-right">Item Subtotal</th>
+                        <th className="p-3 text-center">Edit / Remove</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 font-medium">
@@ -3712,16 +4054,68 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         adminReviewingOrder.items.map((it, idx) => (
                           <tr key={idx} className="hover:bg-slate-50">
                             <td className="p-3 font-mono font-bold text-slate-400 text-[10px]">{it.sku}</td>
-                            <td className="p-3 font-bold text-slate-900">{it.name}</td>
-                            <td className="p-3 text-slate-700">${it.price.toFixed(2)}</td>
-                            <td className="p-3">{it.qty}</td>
-                            <td className="p-3 text-right font-bold text-slate-900">${(it.price * it.qty).toFixed(2)}</td>
+                            <td className="p-3">
+                              <span className="font-bold text-slate-900 block">{it.name}</span>
+                              {it.category && (
+                                <span className="text-[10px] text-slate-400 capitalize">{it.category.replace('-', ' ')}</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-slate-700 font-mono">${it.price.toFixed(2)}</td>
+                            <td className="p-3">
+                              <div className="inline-flex items-center border border-slate-200 rounded-lg bg-white overflow-hidden shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItemQtyInReview(idx, it.qty - 1)}
+                                  className="px-2 py-1 text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-bold text-xs cursor-pointer"
+                                  title="Decrease quantity"
+                                >
+                                  -
+                                </button>
+                                <span className="px-2.5 py-1 text-xs font-bold text-slate-800 bg-slate-50 min-w-[28px] text-center font-mono">
+                                  {it.qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateItemQtyInReview(idx, it.qty + 1)}
+                                  className="px-2 py-1 text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-bold text-xs cursor-pointer"
+                                  title="Increase quantity"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </td>
+                            <td className="p-3 text-right font-bold text-slate-900 font-mono">
+                              ${(it.price * it.qty).toFixed(2)}
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItemFromReview(idx)}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 text-xs font-semibold"
+                                title={`Remove ${it.name} from order`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span className="hidden sm:inline text-[11px]">Remove</span>
+                              </button>
+                            </td>
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={5} className="p-3 text-slate-600">
-                            Purchased Catalog Items ({adminReviewingOrder.itemsCount} Units) &bull; Items Subtotal: <span className="font-bold text-slate-900">${(adminReviewingOrder.subtotal || adminReviewingOrder.total).toFixed(2)}</span>
+                          <td colSpan={6} className="p-6 text-center text-rose-600 bg-rose-50/50 text-xs font-medium">
+                            <AlertCircle className="w-5 h-5 text-rose-500 mx-auto mb-1" />
+                            <span>All items have been removed from this order. You must keep at least 1 item to approve, or click <strong>Decline Order Fulfillment</strong>.</span>
+                            {adminReviewingOrder.originalItems && adminReviewingOrder.originalItems.length > 0 && (
+                              <div className="mt-2">
+                                <button
+                                  type="button"
+                                  onClick={handleResetItemsInReview}
+                                  className="px-3 py-1 bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 rounded-lg text-xs font-bold cursor-pointer"
+                                >
+                                  Restore Original Items
+                                </button>
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}
@@ -3729,8 +4123,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     <tfoot className="bg-slate-50 border-t border-slate-200 text-xs font-bold text-slate-800">
                       <tr>
                         <td colSpan={4} className="p-3 text-right">Items Subtotal:</td>
-                        <td className="p-3 text-right text-slate-900 text-sm font-extrabold">
-                          ${(adminReviewingOrder.subtotal || adminReviewingOrder.total).toFixed(2)}
+                        <td className="p-3 text-right text-slate-900 text-sm font-extrabold font-mono">
+                          ${currentOrderSubtotal.toFixed(2)}
+                        </td>
+                        <td className="p-3 text-center text-[10px] text-slate-400">
+                          {adminReviewingOrder.itemsCount} Total Units
                         </td>
                       </tr>
                     </tfoot>
@@ -3828,12 +4225,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          const base = adminReviewingOrder.subtotal || adminReviewingOrder.total || 0;
-                          setAdminSalesTax((base * 0.0825).toFixed(2));
+                          setAdminSalesTax((currentOrderSubtotal * 0.0825).toFixed(2));
                         }}
                         className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
                       >
-                        8.25% CA Tax (${((adminReviewingOrder.subtotal || adminReviewingOrder.total || 0) * 0.0825).toFixed(2)})
+                        8.25% Tax (${(currentOrderSubtotal * 0.0825).toFixed(2)})
                       </button>
                       <button
                         type="button"
@@ -3898,12 +4294,12 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 {/* Live Grand Total Calculation Summary */}
                 <div className="bg-white p-4 rounded-xl border border-blue-200 flex flex-col sm:flex-row items-center justify-between gap-3">
                   <div className="text-xs text-slate-600 space-y-0.5">
-                    <div>Base Items: <span className="font-semibold text-slate-800">${(adminReviewingOrder.subtotal || adminReviewingOrder.total).toFixed(2)}</span> + Shipping: <span className="font-semibold text-slate-800">${(parsedShipping || 0).toFixed(2)}</span> + Sales Tax: <span className="font-semibold text-slate-800">${(parsedSalesTax || 0).toFixed(2)}</span> + Service Tax: <span className="font-semibold text-slate-800">${(parsedServiceTax || 0).toFixed(2)}</span></div>
-                    <div className="text-[11px] text-slate-500">Grand Total that member will review and accept</div>
+                    <div>Base Items: <span className="font-semibold text-slate-800 font-mono">${currentOrderSubtotal.toFixed(2)}</span> + Shipping: <span className="font-semibold text-slate-800 font-mono">${(parsedShipping || 0).toFixed(2)}</span> + Sales Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedSalesTax || 0).toFixed(2)}</span> + Service Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedServiceTax || 0).toFixed(2)}</span></div>
+                    <div className="text-[11px] text-slate-500">Grand Total that will be billed to the member's credit allocation line upon approval</div>
                   </div>
                   <div className="text-right shrink-0">
                     <span className="text-[10px] uppercase font-bold text-slate-400 block">Calculated Grand Total</span>
-                    <span className="text-xl font-extrabold text-blue-700">${adminCalculatedGrandTotal.toFixed(2)}</span>
+                    <span className="text-xl font-extrabold text-blue-700 font-mono">${adminCalculatedGrandTotal.toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -3982,7 +4378,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 <button
                   type="button"
                   onClick={handleCloseOrderReview}
-                  className="w-full sm:w-auto px-4 py-2.5 border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 text-xs font-bold rounded-xl transition-colors"
+                  className="w-full sm:w-auto px-4 py-2.5 border border-slate-200 text-slate-600 hover:text-slate-900 hover:bg-slate-50 text-xs font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -4004,20 +4400,33 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     <span>1. Decline Order Fulfillment</span>
                   </button>
 
-                  {/* Option 2: Submit to Member for Review and accept */}
+                  {/* Option 2: Approve Order Fulfillment directly */}
                   <button
                     type="button"
-                    disabled={!areAllThreeFeesFilled}
-                    onClick={handleSubmitToMemberForReview}
+                    disabled={!areAllThreeFeesFilled || !adminReviewingOrder.items || adminReviewingOrder.items.length === 0}
+                    onClick={handleApproveOrderFulfillment}
+                    id="admin-approve-order-btn"
                     className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold text-white transition-all flex items-center justify-center gap-2 shadow-xs ${
-                      areAllThreeFeesFilled
-                        ? 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm hover:shadow'
+                      areAllThreeFeesFilled && adminReviewingOrder.items && adminReviewingOrder.items.length > 0
+                        ? isItemsModifiedByAdmin
+                          ? 'bg-amber-600 hover:bg-amber-700 cursor-pointer shadow-sm hover:shadow active:scale-[0.99]'
+                          : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm hover:shadow active:scale-[0.99]'
                         : 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     }`}
-                    title={areAllThreeFeesFilled ? 'Submit fee assessment to member for acceptance' : 'Fill all three fees first'}
+                    title={
+                      !areAllThreeFeesFilled
+                        ? 'Fill all three fees first'
+                        : !adminReviewingOrder.items || adminReviewingOrder.items.length === 0
+                        ? 'Keep at least 1 item to approve order'
+                        : isItemsModifiedByAdmin
+                        ? 'Approve order with item adjustments'
+                        : 'Approve order and process fulfillment'
+                    }
                   >
-                    <Send className="w-4 h-4" />
-                    <span>2. Submit to Member for Review and Accept</span>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {isItemsModifiedByAdmin ? '2. Approve Order (Updated and Approved)' : '2. Approve Order (Approved)'}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -4717,10 +5126,15 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-3 py-1.5 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 border border-slate-200 cursor-pointer"
+                  id="admin-invoice-print-pdf-btn"
+                  onClick={() => {
+                    const matchingOrder = orders.find((o) => o.orderNumber === viewingInvoice.orderNumber);
+                    downloadInvoicePdf({ invoice: viewingInvoice, order: matchingOrder });
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 border border-slate-300 cursor-pointer shadow-2xs"
+                  title="Generate and download PDF invoice"
                 >
-                  <Printer className="w-3.5 h-3.5 text-slate-500" /> Print
+                  <Printer className="w-3.5 h-3.5 text-emerald-600" /> Print / Download PDF
                 </button>
                 <button
                   type="button"

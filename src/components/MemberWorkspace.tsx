@@ -12,6 +12,11 @@ import {
 } from '../types';
 import { SAMPLE_PRODUCTS } from '../data/sampleData';
 import { 
+  loadStoredProducts, 
+  isProductVisibleToMember, 
+  PRODUCTS_UPDATED_EVENT 
+} from '../utils/productUtils';
+import { 
   Home as HomeIcon,
   ShoppingBag,
   PackageCheck,
@@ -42,8 +47,11 @@ import {
   ArrowRight,
   RefreshCw,
   Send,
-  HelpCircle
+  HelpCircle,
+  Printer,
+  Download
 } from 'lucide-react';
+import { downloadInvoicePdf, printOrDownloadInvoicePdf } from '../utils/generateInvoicePdf';
 
 interface MemberWorkspaceProps {
   user: User;
@@ -121,22 +129,45 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     }
   });
 
-  // Listen for cross-tab or localStorage changes
+  // Dynamic Products State (persisted with device pictures, stock & member-specific visibility rules)
+  const [products, setProducts] = useState<ProductItem[]>(() => loadStoredProducts());
+
+  useEffect(() => {
+    const handleProductsUpdated = () => {
+      setProducts(loadStoredProducts());
+    };
+    window.addEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
+    return () => {
+      window.removeEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
+    };
+  }, []);
+
+  // Listen for cross-tab or localStorage changes (guarded against redundant re-renders)
   useEffect(() => {
     const handleStorageChange = () => {
       try {
         const savedOrders = localStorage.getItem('distro_orders');
-        if (savedOrders) setOrders(JSON.parse(savedOrders));
+        if (savedOrders) {
+          setOrders((prev) => (JSON.stringify(prev) !== savedOrders ? JSON.parse(savedOrders) : prev));
+        }
         const savedInvoices = localStorage.getItem('distro_invoices');
-        if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
+        if (savedInvoices) {
+          setInvoices((prev) => (JSON.stringify(prev) !== savedInvoices ? JSON.parse(savedInvoices) : prev));
+        }
         const savedPayments = localStorage.getItem('distro_payments');
-        if (savedPayments) setPayments(JSON.parse(savedPayments));
+        if (savedPayments) {
+          setPayments((prev) => (JSON.stringify(prev) !== savedPayments ? JSON.parse(savedPayments) : prev));
+        }
         const savedMembers = localStorage.getItem('distro_team_members');
-        if (savedMembers) setMembers(JSON.parse(savedMembers));
+        if (savedMembers) {
+          setMembers((prev) => (JSON.stringify(prev) !== savedMembers ? JSON.parse(savedMembers) : prev));
+        }
         const savedMasterLimit = localStorage.getItem('distro_master_credit_limit');
         if (savedMasterLimit !== null) {
           const parsed = Number(savedMasterLimit);
-          if (!isNaN(parsed)) setMasterCreditLimit(parsed);
+          if (!isNaN(parsed)) {
+            setMasterCreditLimit((prev) => (prev !== parsed ? parsed : prev));
+          }
         }
       } catch (err) {
         console.error('Storage sync error:', err);
@@ -176,6 +207,10 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
   const committedCredit = memberOrders
     .filter((o) => 
       o.status === 'Pending review and approval by Admin' ||
+      o.status === 'Updated and Approved' ||
+      o.status === 'Approved' ||
+      o.status === 'Approved with changes by Admin' ||
+      o.status === 'Approved by Admin' ||
       o.status === 'Ready for Member Review & Acceptance' ||
       o.status === 'Approved & Processing' ||
       o.status === 'Open' ||
@@ -193,6 +228,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
   // Modal State for Member Review & Acceptance of Admin-reviewed order
   const [reviewingOrder, setReviewingOrder] = useState<OrderItem | null>(null);
+  const [viewingMemberInvoice, setViewingMemberInvoice] = useState<InvoiceItem | null>(null);
   const [acceptanceSuccessMsg, setAcceptanceSuccessMsg] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -232,7 +268,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
   // Cart items with full details
   const cartItemsWithDetails = orderCart
     .map((item) => {
-      const product = SAMPLE_PRODUCTS.find((p) => p.id === item.productId);
+      const product = products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId);
       return product ? { ...item, product } : null;
     })
     .filter((item): item is { productId: string; qty: number; product: ProductItem } => item !== null);
@@ -343,7 +379,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
   // Helper to render product grid for shopping
   const renderProductGrid = (categoryKey: string, categoryTitle: string, categoryIcon: React.ReactNode) => {
-    const products = SAMPLE_PRODUCTS.filter((p) => p.category === categoryKey);
+    const visibleProducts = products.filter((p) => p.category === categoryKey && isProductVisibleToMember(p, user.username));
 
     return (
       <div className="space-y-6">
@@ -365,7 +401,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             </div>
             <button
               onClick={() => onNavigate('place-new-order')}
-              className="px-3.5 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100/70 hover:bg-emerald-100 rounded-lg transition-colors flex items-center gap-1.5 border border-emerald-300"
+              className="px-3.5 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-100/70 hover:bg-emerald-100 rounded-lg transition-colors flex items-center gap-1.5 border border-emerald-300 cursor-pointer"
             >
               <ShoppingBag className="w-3.5 h-3.5" /> View Cart ({cartItemsWithDetails.length})
             </button>
@@ -373,7 +409,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {products.map((item) => {
+          {visibleProducts.map((item) => {
             const inCart = orderCart.find((ci) => ci.productId === item.id);
             return (
               <div
@@ -381,12 +417,24 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
               >
                 <div>
+                  {/* Product Image / Device Photo */}
+                  {item.image && (
+                    <div className="mb-4 h-44 w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-100 flex items-center justify-center p-2">
+                      <img 
+                        src={item.image} 
+                        alt={item.name} 
+                        referrerPolicy="no-referrer"
+                        className="max-h-full max-w-full object-contain hover:scale-105 transition-transform duration-200" 
+                      />
+                    </div>
+                  )}
+
                   <div className="flex items-start justify-between mb-3">
                     <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md text-[10px] font-mono font-bold uppercase border border-slate-200">
                       SKU: {item.sku}
                     </span>
                     <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                      In Stock ({item.stock})
+                      {item.showStockToMembers !== false ? `In Stock (${item.stock})` : 'In Stock (Available)'}
                     </span>
                   </div>
 
@@ -416,14 +464,14 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <div className="flex items-center border border-emerald-300 rounded-lg bg-emerald-50 p-1">
                         <button
                           onClick={() => updateCartQty(item.id, inCart.qty - 1)}
-                          className="w-6 h-6 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs"
+                          className="w-6 h-6 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
                         >
                           -
                         </button>
                         <span className="px-2 font-mono font-bold text-xs text-emerald-900">{inCart.qty}</span>
                         <button
                           onClick={() => updateCartQty(item.id, inCart.qty + 1)}
-                          className="w-6 h-6 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs"
+                          className="w-6 h-6 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
                         >
                           +
                         </button>
@@ -441,6 +489,12 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
               </div>
             );
           })}
+          {visibleProducts.length === 0 && (
+            <div className="col-span-full p-12 bg-white border border-slate-200 rounded-xl text-center">
+              <p className="text-sm font-semibold text-slate-700">No items available in this category for your account.</p>
+              <p className="text-xs text-slate-500 mt-1">Please contact your distribution administrator for catalog access.</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -456,11 +510,27 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             <span>Pending review and approval by Admin</span>
           </span>
         );
+      case 'Updated and Approved':
+      case 'Approved with changes by Admin':
+        return (
+          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>Updated and Approved</span>
+          </span>
+        );
+      case 'Approved':
+      case 'Approved by Admin':
+        return (
+          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            <span>Approved</span>
+          </span>
+        );
       case 'Ready for Member Review & Acceptance':
         return (
-          <span className="px-2.5 py-1 bg-blue-50 text-blue-800 border border-blue-300 rounded-full text-[10px] font-bold inline-flex items-center gap-1 animate-pulse">
-            <AlertCircle className="w-3 h-3 text-blue-600" />
-            <span>Ready for Member Review & Acceptance</span>
+          <span className="px-2.5 py-1 bg-blue-50 text-blue-800 border border-blue-300 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-blue-600" />
+            <span>Approved & Processing</span>
           </span>
         );
       case 'Declined by Admin':
@@ -508,11 +578,6 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     }
   };
 
-  // Orders awaiting member action
-  const ordersAwaitingMember = memberOrders.filter(
-    (o) => o.status === 'Ready for Member Review & Acceptance'
-  );
-
   // Active open orders for member
   const openMemberOrders = memberOrders.filter(
     (o) => o.status !== 'Completed' && o.status !== 'Shipped' && o.status !== 'Cancelled'
@@ -558,33 +623,6 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
               </div>
             </div>
           </div>
-
-          {/* Critical Attention Banner: Orders awaiting member review */}
-          {ordersAwaitingMember.length > 0 && (
-            <div className="bg-gradient-to-r from-blue-900 to-indigo-900 text-white rounded-xl p-5 shadow-md border border-blue-700 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-in fade-in">
-              <div className="flex items-start space-x-3">
-                <div className="p-2 bg-blue-500/30 rounded-lg text-blue-300 shrink-0 mt-0.5">
-                  <AlertCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">
-                    Action Required: Quote Ready for Your Review & Acceptance ({ordersAwaitingMember.length})
-                  </h3>
-                  <p className="text-xs text-blue-200 mt-0.5">
-                    The Admin has assessed shipping and taxes for your order. Review the quote summary and accept to confirm fulfillment.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setReviewingOrder(ordersAwaitingMember[0])}
-                id="home-action-review-order-btn"
-                className="px-4 py-2 bg-white text-blue-950 font-bold text-xs rounded-lg shadow-xs hover:bg-blue-50 transition-colors shrink-0 flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <span>Review Quote Now</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
 
           {/* Allocated Credit Summary Widget */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -827,50 +865,62 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {SAMPLE_PRODUCTS.map((item) => {
-                  const inCart = orderCart.find((ci) => ci.productId === item.id);
-                  return (
-                    <div 
-                      key={item.id} 
-                      className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex items-center justify-between hover:border-emerald-300 transition-all"
-                    >
-                      <div className="pr-2">
-                        <span className="text-[10px] font-mono font-bold text-slate-400 block">{item.sku}</span>
-                        <h4 className="font-bold text-slate-900 text-xs line-clamp-1">{item.name}</h4>
-                        <span className="text-xs font-bold text-emerald-700 font-mono">${item.price.toFixed(2)}</span>
-                      </div>
-
-                      {inCart ? (
-                        <div className="flex items-center border border-emerald-300 rounded-lg bg-emerald-50 p-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.id, inCart.qty - 1)}
-                            className="w-5 h-5 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
-                          >
-                            -
-                          </button>
-                          <span className="px-1.5 font-mono font-bold text-xs text-emerald-900">{inCart.qty}</span>
-                          <button
-                            type="button"
-                            onClick={() => updateCartQty(item.id, inCart.qty + 1)}
-                            className="w-5 h-5 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
-                          >
-                            +
-                          </button>
+                {products
+                  .filter((item) => isProductVisibleToMember(item, user.username))
+                  .map((item) => {
+                    const inCart = orderCart.find((ci) => ci.productId === item.id);
+                    return (
+                      <div 
+                        key={item.id} 
+                        className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between hover:border-emerald-300 transition-all gap-3"
+                      >
+                        {item.image && (
+                          <div className="w-12 h-12 shrink-0 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center p-1 overflow-hidden">
+                            <img src={item.image} alt={item.name} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0 pr-1">
+                          <div className="flex items-center gap-1.5 mb-0.5">
+                            <span className="text-[10px] font-mono font-bold text-slate-400 block">{item.sku}</span>
+                            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded">
+                              {item.showStockToMembers !== false ? `Stock: ${item.stock}` : 'In Stock'}
+                            </span>
+                          </div>
+                          <h4 className="font-bold text-slate-900 text-xs line-clamp-1">{item.name}</h4>
+                          <span className="text-xs font-bold text-emerald-700 font-mono">${item.price.toFixed(2)}</span>
                         </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => addToCart(item.id)}
-                          className="p-2 bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white rounded-lg transition-colors border border-emerald-200 shrink-0 cursor-pointer"
-                          title="Add to order"
-                        >
-                          <PlusCircle className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
+
+                        {inCart ? (
+                          <div className="flex items-center border border-emerald-300 rounded-lg bg-emerald-50 p-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => updateCartQty(item.id, inCart.qty - 1)}
+                              className="w-5 h-5 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <span className="px-1.5 font-mono font-bold text-xs text-emerald-900">{inCart.qty}</span>
+                            <button
+                              type="button"
+                              onClick={() => updateCartQty(item.id, inCart.qty + 1)}
+                              className="w-5 h-5 flex items-center justify-center font-bold text-emerald-800 hover:bg-emerald-200 rounded text-xs cursor-pointer"
+                            >
+                              +
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => addToCart(item.id)}
+                            className="p-2 bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white rounded-lg transition-colors border border-emerald-200 shrink-0 cursor-pointer"
+                            title="Add to order"
+                          >
+                            <PlusCircle className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
 
@@ -1097,31 +1147,14 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                           <td className="p-4 font-mono font-extrabold text-slate-900">${(ord.total || ord.subtotal).toFixed(2)}</td>
                           <td className="p-4">{renderStatusBadge(ord.status)}</td>
                           <td className="p-4 text-right space-x-2 whitespace-nowrap">
-                            {ord.status === 'Ready for Member Review & Acceptance' ? (
-                              <button
-                                onClick={() => setReviewingOrder(ord)}
-                                id={`member-review-quote-btn-${ord.id}`}
-                                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg transition-colors shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                <span>Review & Accept Quote</span>
-                              </button>
-                            ) : ord.status === 'Declined by Admin' ? (
-                              <div className="inline-flex items-center gap-1">
-                                <span className="text-[11px] text-rose-700 font-semibold bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
-                                  {ord.adminDeclineReason || 'Declined by Admin'}
-                                </span>
-                              </div>
-                            ) : ord.status === 'Pending review and approval by Admin' ? (
-                              <span className="text-[11px] text-amber-700 font-medium bg-amber-50 px-2 py-1 rounded border border-amber-200 inline-flex items-center gap-1">
-                                <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
-                                <span>Awaiting Admin</span>
-                              </span>
-                            ) : (
-                              <span className="text-[11px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                In Fulfillment
-                              </span>
-                            )}
+                            <button
+                              onClick={() => setReviewingOrder(ord)}
+                              id={`member-view-order-btn-${ord.id}`}
+                              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-lg transition-colors border border-slate-200 inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-blue-600" />
+                              <span>View Details</span>
+                            </button>
                           </td>
                         </tr>
                       );
@@ -1301,12 +1334,22 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <th className="p-4">Amount</th>
                       <th className="p-4">Payment Method</th>
                       <th className="p-4">Status</th>
+                      <th className="p-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
                     {invoices.map((inv) => (
                       <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
-                        <td className="p-4 font-bold font-mono text-emerald-700">{inv.invoiceNumber}</td>
+                        <td className="p-4 font-bold font-mono text-emerald-700">
+                          <button
+                            type="button"
+                            onClick={() => setViewingMemberInvoice(inv)}
+                            className="hover:underline text-left cursor-pointer"
+                            title="View statement details"
+                          >
+                            {inv.invoiceNumber}
+                          </button>
+                        </td>
                         <td className="p-4">
                           {inv.title === 'Late Payment' ? (
                             <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
@@ -1343,6 +1386,33 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                           }`}>
                             {inv.status}
                           </span>
+                        </td>
+                        <td className="p-4 text-right space-x-1.5 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                              downloadInvoicePdf({ 
+                                invoice: inv, 
+                                order: matchingOrder,
+                                companyName: 'DistroAdmin Wholesale Distribution',
+                                companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                              });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            title="Print / Download PDF"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Print PDF</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setViewingMemberInvoice(inv)}
+                            className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors inline-flex cursor-pointer"
+                            title="View Statement"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1457,21 +1527,64 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     <th className="p-3">Date</th>
                     <th className="p-3">Amount</th>
                     <th className="p-3">Status</th>
+                    <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {filteredMemberInvoices.map((inv) => (
                     <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
-                      <td className="p-3 font-bold font-mono text-emerald-700">{inv.invoiceNumber}</td>
+                      <td className="p-3 font-bold font-mono text-emerald-700">
+                        <button
+                          type="button"
+                          onClick={() => setViewingMemberInvoice(inv)}
+                          className="hover:underline text-left cursor-pointer"
+                        >
+                          {inv.invoiceNumber}
+                        </button>
+                      </td>
                       <td className="p-3 font-mono">{inv.orderNumber}</td>
                       <td className="p-3">{inv.date}</td>
                       <td className="p-3 font-bold font-mono text-slate-900">${inv.amount.toFixed(2)}</td>
-                      <td className="p-3 font-bold text-emerald-600">{inv.status}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          inv.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                          inv.status === 'Overdue' ? 'bg-red-50 text-red-700 border border-red-200' :
+                          'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}>
+                          {inv.status}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                            downloadInvoicePdf({ 
+                              invoice: inv, 
+                              order: matchingOrder,
+                              companyName: 'DistroAdmin Wholesale Distribution',
+                              companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                            });
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="Print / Download PDF"
+                        >
+                          <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Print PDF</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewingMemberInvoice(inv)}
+                          className="px-2.5 py-1 text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors cursor-pointer"
+                        >
+                          View Statement
+                        </button>
+                      </td>
                     </tr>
                   ))}
                   {filteredMemberInvoices.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-6 text-center text-slate-400 text-xs">
+                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs">
                         No matching invoices found for "{invoiceSearchQuery}".
                       </td>
                     </tr>
@@ -1588,30 +1701,76 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-slate-900 tracking-tight">
-                      Order Fulfillment Quote & Fee Review
+                      Order Summary & Fulfillment Status
                     </h3>
                     <span className="px-2.5 py-0.5 bg-blue-100 text-blue-800 rounded-full font-mono text-xs font-bold">
                       {reviewingOrder.orderNumber}
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Admin has reviewed your order and provided shipping fee, sales tax, and service tax calculations.
+                    Order fulfillment breakdown, assessed shipping fees, and taxes from Admin.
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setReviewingOrder(null);
-                  setShowCancelModal(false);
-                }}
-                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
-                title="Close review"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const inv = invoices.find((i) => i.orderNumber === reviewingOrder.orderNumber) || {
+                      invoiceNumber: `INV-${reviewingOrder.orderNumber.replace('ORD-', '')}`,
+                      orderNumber: reviewingOrder.orderNumber,
+                      title: 'Wholesale Order Settlement',
+                      customerName: reviewingOrder.customerName || memberDisplayName,
+                      billedTo: reviewingOrder.businessAddress || memberStoreAddress,
+                      memberUsername: user.username,
+                      date: reviewingOrder.date,
+                      dueDate: 'Net 15 Days',
+                      amount: reviewingOrder.total,
+                      status: 'Paid',
+                      method: 'Allocated Credit Line'
+                    };
+                    downloadInvoicePdf({ 
+                      invoice: inv, 
+                      order: reviewingOrder,
+                      companyName: 'DistroAdmin Wholesale Distribution',
+                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                    });
+                  }}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  title="Print / Download PDF Invoice"
+                >
+                  <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Print PDF</span>
+                </button>
+                <button
+                  onClick={() => setReviewingOrder(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-6">
+              {/* Order Status Banners */}
+              {reviewingOrder.status === 'Declined by Admin' ? (
+                <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-900 rounded-xl text-xs font-semibold flex items-center gap-2.5">
+                  <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Declined by Admin: {reviewingOrder.adminDeclineReason || 'Fulfillment could not be approved at this time.'}</span>
+                </div>
+              ) : reviewingOrder.status === 'Updated and Approved' || reviewingOrder.status === 'Approved with changes by Admin' || reviewingOrder.itemsModifiedByAdmin ? (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl text-xs font-semibold flex items-center gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Notice: This order has been updated and approved with item adjustments or quantity modifications made by Admin.</span>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl text-xs font-semibold flex items-center gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Order approved and queued for warehouse fulfillment. Funded via your allocated credit line.</span>
+                </div>
+              )}
+
               {/* Order Meta Info Card */}
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
                 <div>
@@ -1624,15 +1783,22 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Current Status</span>
-                  <span className="font-bold text-blue-700">{reviewingOrder.status}</span>
+                  <span className="font-bold text-emerald-700">{reviewingOrder.status}</span>
                 </div>
               </div>
 
               {/* Items Table */}
               <div>
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  Order Items Breakdown ({reviewingOrder.itemsCount} Units)
-                </h4>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Order Items Breakdown ({reviewingOrder.itemsCount} Units)
+                  </h4>
+                  {reviewingOrder.itemsModifiedByAdmin && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 bg-amber-100 text-amber-900 rounded border border-amber-300">
+                      Modified by Admin
+                    </span>
+                  )}
+                </div>
                 <div className="border border-slate-200 rounded-xl overflow-hidden">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold border-b border-slate-200">
@@ -1711,7 +1877,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   <div className="pt-3 border-t border-blue-200 flex justify-between items-center text-slate-900">
                     <div>
                       <span className="text-xs font-extrabold uppercase tracking-wide block">Final Order Grand Total:</span>
-                      <span className="text-[10px] text-slate-500">Charged against your allocated credit</span>
+                      <span className="text-[10px] text-slate-500">Funded by Allocated Credit Line</span>
                     </div>
                     <span className="font-mono font-black text-xl text-emerald-800">
                       ${reviewingOrder.total.toFixed(2)}
@@ -1720,86 +1886,258 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 </div>
               </div>
 
-              {/* Credit Verification Card */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs">
-                <div className="flex justify-between">
-                  <span className="text-slate-600">Your Allocated Credit Line:</span>
-                  <span className="font-mono font-bold text-slate-900">${memberCreditLimit.toFixed(2)}</span>
+              {/* Actions Footer */}
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const inv = invoices.find((i) => i.orderNumber === reviewingOrder.orderNumber) || {
+                      invoiceNumber: `INV-${reviewingOrder.orderNumber.replace('ORD-', '')}`,
+                      orderNumber: reviewingOrder.orderNumber,
+                      title: 'Wholesale Order Settlement',
+                      customerName: reviewingOrder.customerName || memberDisplayName,
+                      billedTo: reviewingOrder.businessAddress || memberStoreAddress,
+                      memberUsername: user.username,
+                      date: reviewingOrder.date,
+                      dueDate: 'Net 15 Days',
+                      amount: reviewingOrder.total,
+                      status: 'Paid',
+                      method: 'Allocated Credit Line'
+                    };
+                    downloadInvoicePdf({ 
+                      invoice: inv, 
+                      order: reviewingOrder,
+                      companyName: 'DistroAdmin Wholesale Distribution',
+                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                    });
+                  }}
+                  className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-2 shadow-2xs"
+                >
+                  <Printer className="w-4 h-4 text-emerald-600" />
+                  <span>Download / Print Invoice PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReviewingOrder(null)}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-xs"
+                >
+                  Close Order Details
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Member Invoice / Statement Modal */}
+      {viewingMemberInvoice && (
+        <div 
+          id="view-member-invoice-statement-modal"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
+        >
+          <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 md:p-8 my-8 overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Top Accent bar */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500" />
+
+            {/* Header with Print & Close */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-6">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold shadow-xs">
+                  <Box className="w-5 h-5" />
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-600">Available Credit Balance:</span>
-                  <span className="font-mono font-bold text-emerald-700">${availableCredit.toFixed(2)}</span>
-                </div>
-                <div className="pt-2 border-t border-slate-200 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span className="text-emerald-800 font-semibold text-[11px]">
-                    Your allocated credit line is active and will fund this order upon acceptance.
-                  </span>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight">DistroAdmin Wholesale</h3>
+                  <p className="text-[11px] text-slate-500">Official Commercial Billing Statement</p>
                 </div>
               </div>
 
-              {/* Cancellation Form (if toggled) */}
-              {showCancelModal && (
-                <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl space-y-3 animate-in fade-in">
-                  <span className="text-xs font-bold text-rose-900 block">
-                    Please provide an optional cancellation reason:
-                  </span>
-                  <input
-                    type="text"
-                    value={cancellationReason}
-                    onChange={(e) => setCancellationReason(e.target.value)}
-                    placeholder="e.g. Price higher than expected, delivery timeline not feasible..."
-                    className="w-full p-2.5 bg-white border border-rose-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500"
-                  />
-                  <div className="flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShowCancelModal(false)}
-                      className="px-3 py-1.5 bg-white border border-slate-200 text-slate-700 text-xs font-bold rounded-lg"
-                    >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMemberCancelOrder(reviewingOrder)}
-                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
-                    >
-                      Confirm Cancel Order
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Actions Footer */}
-              <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowCancelModal(true)}
-                  className="w-full sm:w-auto px-4 py-2.5 border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold rounded-xl transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  id="member-invoice-print-pdf-btn"
+                  onClick={() => {
+                    const matchingOrder = orders.find((o) => o.orderNumber === viewingMemberInvoice.orderNumber);
+                    downloadInvoicePdf({ 
+                      invoice: viewingMemberInvoice, 
+                      order: matchingOrder,
+                      companyName: 'DistroAdmin Wholesale Distribution',
+                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                    });
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 border border-slate-300 cursor-pointer shadow-2xs"
+                  title="Generate and download PDF invoice"
                 >
-                  <XCircle className="w-4 h-4" />
-                  <span>Decline / Cancel Order</span>
+                  <Printer className="w-3.5 h-3.5 text-emerald-600" /> Print / Download PDF
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingMemberInvoice(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
 
-                <div className="w-full sm:w-auto flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setReviewingOrder(null)}
-                    className="w-full sm:w-auto px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold rounded-xl transition-colors cursor-pointer"
-                  >
-                    Close
-                  </button>
+            {/* Statement Meta Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs mb-6">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Invoice Number</span>
+                <span className="font-mono font-bold text-emerald-700">{viewingMemberInvoice.invoiceNumber}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Reference #</span>
+                <span className="font-mono font-semibold text-slate-700">{viewingMemberInvoice.orderNumber}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Issue Date</span>
+                <span className="font-medium text-slate-800">{viewingMemberInvoice.date}</span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Due Date</span>
+                <span className="font-medium text-slate-800">{viewingMemberInvoice.dueDate}</span>
+              </div>
+            </div>
 
-                  <button
-                    type="button"
-                    onClick={() => handleMemberAcceptOrder(reviewingOrder)}
-                    id="accept-and-confirm-order-btn"
-                    className="w-full sm:w-auto px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white text-xs font-bold rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" />
-                    <span>Accept Order & Confirm Fulfillment</span>
-                  </button>
+            {/* Billing Addresses */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs mb-6">
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Issued By</span>
+                <p className="font-bold text-slate-900">DistroAdmin Distribution Inc.</p>
+                <p className="text-slate-600">450 Mission Street, Suite 800</p>
+                <p className="text-slate-600">San Francisco, CA 94105</p>
+                <p className="text-slate-500 mt-1">billing@distroadmin.com</p>
+              </div>
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Billed To (Retail Member)</span>
+                <p className="font-bold text-slate-900">{viewingMemberInvoice.customerName || memberDisplayName}</p>
+                <p className="text-slate-600">{viewingMemberInvoice.billedTo || memberStoreAddress}</p>
+                <p className="text-slate-500 mt-1">Account: @{user.username}</p>
+              </div>
+            </div>
+
+            {/* Items / Line Charges */}
+            {(() => {
+              const matchingOrder = orders.find((o) => o.orderNumber === viewingMemberInvoice.orderNumber);
+              const items = matchingOrder?.items || [];
+              const subtotal = matchingOrder?.subtotal || viewingMemberInvoice.amount;
+              const shippingFee = matchingOrder?.shippingFee || 0;
+              const salesTax = matchingOrder?.salesTax || 0;
+              const serviceTax = matchingOrder?.serviceTax || 0;
+
+              return (
+                <div className="space-y-4">
+                  <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px]">
+                        <tr>
+                          <th className="p-3">Item / Description</th>
+                          <th className="p-3 text-center">SKU</th>
+                          <th className="p-3 text-right">Unit Price</th>
+                          <th className="p-3 text-center">Qty</th>
+                          <th className="p-3 text-right">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {items.length > 0 ? (
+                          items.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50">
+                              <td className="p-3 font-semibold text-slate-900">{item.name}</td>
+                              <td className="p-3 text-center font-mono text-[10px] text-slate-500">{item.sku}</td>
+                              <td className="p-3 text-right text-slate-700">${item.price.toFixed(2)}</td>
+                              <td className="p-3 text-center text-slate-800">{item.qty}</td>
+                              <td className="p-3 text-right font-bold text-slate-900 font-mono">
+                                ${(item.price * item.qty).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td className="p-3 font-semibold text-slate-900">
+                              {viewingMemberInvoice.title || 'Wholesale Distribution Order Fulfillment'}
+                            </td>
+                            <td className="p-3 text-center font-mono text-[10px] text-slate-500">WHOLESALE-DIST</td>
+                            <td className="p-3 text-right text-slate-700">${viewingMemberInvoice.amount.toFixed(2)}</td>
+                            <td className="p-3 text-center text-slate-800">1</td>
+                            <td className="p-3 text-right font-bold text-slate-900 font-mono">
+                              ${viewingMemberInvoice.amount.toFixed(2)}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Summary Totals */}
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-2">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Products Subtotal:</span>
+                      <span className="font-mono font-semibold text-slate-900">${subtotal.toFixed(2)}</span>
+                    </div>
+                    {shippingFee > 0 && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>Assessed Freight & Shipping:</span>
+                        <span className="font-mono font-semibold text-slate-900">+${shippingFee.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {salesTax > 0 && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>State Sales Tax:</span>
+                        <span className="font-mono font-semibold text-slate-900">+${salesTax.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {serviceTax > 0 && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>Warehouse Processing / Service Fee:</span>
+                        <span className="font-mono font-semibold text-slate-900">+${serviceTax.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="pt-2 border-t border-slate-200 flex justify-between items-center">
+                      <span className="font-bold text-sm text-slate-900">Grand Total:</span>
+                      <span className="font-mono font-black text-base text-emerald-700">
+                        ${viewingMemberInvoice.amount.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+              );
+            })()}
+
+            {/* Footer with Payment info & Close button */}
+            <div className="mt-6 pt-4 border-t border-slate-200 flex items-center justify-between">
+              <div className="text-[11px] text-slate-500">
+                Payment Method: <span className="font-semibold text-slate-800">{viewingMemberInvoice.method || 'Company Credit Allocation'}</span>
+                <span className={`ml-2 px-2 py-0.5 rounded font-bold ${
+                  viewingMemberInvoice.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                  viewingMemberInvoice.status === 'Overdue' ? 'bg-red-50 text-red-700 border border-red-200' :
+                  'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  {viewingMemberInvoice.status}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const matchingOrder = orders.find((o) => o.orderNumber === viewingMemberInvoice.orderNumber);
+                    downloadInvoicePdf({ 
+                      invoice: viewingMemberInvoice, 
+                      order: matchingOrder,
+                      companyName: 'DistroAdmin Wholesale Distribution',
+                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                    });
+                  }}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingMemberInvoice(null)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

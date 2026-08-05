@@ -10,7 +10,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 139.99,
     stock: 42,
     description: '6.5" Super AMOLED 90Hz Display, 50MP Triple Camera, 128GB Storage',
-    specs: ['5000 mAh Battery', '5G Network', '128GB ROM / 4GB RAM']
+    image: 'https://images.unsplash.com/photo-1598327105666-5b89351aff97?auto=format&fit=crop&w=600&q=80',
+    specs: ['5000 mAh Battery', '5G Network', '128GB ROM / 4GB RAM'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p2',
@@ -20,7 +25,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 159.99,
     stock: 28,
     description: 'Built-in Stylus, 50MP Camera system with OIS, 120Hz FHD+ Display',
-    specs: ['Built-in Stylus', '5000 mAh Battery', '256GB Storage']
+    image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?auto=format&fit=crop&w=600&q=80',
+    specs: ['Built-in Stylus', '5000 mAh Battery', '256GB Storage'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p3',
@@ -30,7 +40,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 119.99,
     stock: 65,
     description: '6.58" HD+ Display, 50MP dual camera, long-lasting battery life',
-    specs: ['5G Connectivity', 'Face Unlock', 'Clean Android UI']
+    image: 'https://images.unsplash.com/photo-1580910051074-3eb694886505?auto=format&fit=crop&w=600&q=80',
+    specs: ['5G Connectivity', 'Face Unlock', 'Clean Android UI'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p4',
@@ -40,7 +55,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 189.99,
     stock: 19,
     description: '120Hz Super AMOLED, Stereo Speakers, Vision Booster Technology',
-    specs: ['6.5" FHD+ Screen', '4K Video Recording', '128GB Storage']
+    image: 'https://images.unsplash.com/photo-1610945265064-0e34e5519bbf?auto=format&fit=crop&w=600&q=80',
+    specs: ['6.5" FHD+ Screen', '4K Video Recording', '128GB Storage'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
 
   // Display Phones (Dummy / Demo Units)
@@ -52,7 +72,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 24.99,
     stock: 150,
     description: 'Non-working retail display model with realistic weight and screen decal',
-    specs: ['1:1 Scale', 'Metal Frame', 'Security Tether Compatible']
+    image: 'https://images.unsplash.com/photo-1565849904461-04a58ad377e0?auto=format&fit=crop&w=600&q=80',
+    specs: ['1:1 Scale', 'Metal Frame', 'Security Tether Compatible'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p6',
@@ -62,7 +87,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 29.99,
     stock: 80,
     description: 'Full titanium feel 1:1 dummy unit for retail counter displays',
-    specs: ['1:1 Scale', 'Titanium Finish', 'Dummy Glass Screen']
+    image: 'https://images.unsplash.com/photo-1592750475338-74b7b21085ab?auto=format&fit=crop&w=600&q=80',
+    specs: ['1:1 Scale', 'Titanium Finish', 'Dummy Glass Screen'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
 
   // Sim Cards
@@ -74,7 +104,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 25.00,
     stock: 320,
     description: 'Pre-activated batch triple-cut SIM cards (Standard, Micro, Nano)',
-    specs: ['5G / LTE Compatible', 'Universal Slot', 'Batch Barcode Ready']
+    image: 'https://images.unsplash.com/photo-1563770660941-20978e870e26?auto=format&fit=crop&w=600&q=80',
+    specs: ['5G / LTE Compatible', 'Universal Slot', 'Batch Barcode Ready'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p8',
@@ -84,7 +119,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 95.00,
     stock: 110,
     description: 'Bulk store supply pre-paid SIM cards for high-volume dealers',
-    specs: ['50 Units Box', 'Retail Ready', 'Universal ID Tagging']
+    image: 'https://images.unsplash.com/photo-1562975327-2c939768a49c?auto=format&fit=crop&w=600&q=80',
+    specs: ['50 Units Box', 'Retail Ready', 'Universal ID Tagging'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
 
   // Accessories
@@ -96,7 +136,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 8.50,
     stock: 500,
     description: 'Compact GaN fast charging block with Power Delivery 3.0',
-    specs: ['30W Output', 'UL Certified', 'Overheat Protection']
+    image: 'https://images.unsplash.com/photo-1583863788434-e58a36330cf0?auto=format&fit=crop&w=600&q=80',
+    specs: ['30W Output', 'UL Certified', 'Overheat Protection'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p10',
@@ -106,7 +151,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 18.00,
     stock: 240,
     description: '9H Hardness scratch resistant glass for popular Samsung/iPhone models',
-    specs: ['Oleophobic Coating', 'Case Friendly', 'Alignment Tray Included']
+    image: 'https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?auto=format&fit=crop&w=600&q=80',
+    specs: ['Oleophobic Coating', 'Case Friendly', 'Alignment Tray Included'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p11',
@@ -116,7 +166,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 4.25,
     stock: 650,
     description: 'Durable 6-foot heavy duty braided cable supporting 60W charging',
-    specs: ['Heavy Nylon Braid', 'Reinforced Neck', 'High Speed Data Transfer']
+    image: 'https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&w=600&q=80',
+    specs: ['Heavy Nylon Braid', 'Reinforced Neck', 'High Speed Data Transfer'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
 
   // Supplies
@@ -128,7 +183,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 14.99,
     stock: 85,
     description: 'Retail counter plastic bags with reinforced handle cutouts',
-    specs: ['100 Count', 'Official Branding', 'Heavy-Duty Film']
+    image: 'https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=600&q=80',
+    specs: ['100 Count', 'Official Branding', 'Heavy-Duty Film'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   },
   {
     id: 'p13',
@@ -138,7 +198,12 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
     price: 48.00,
     stock: 40,
     description: 'BPA-free high sensitivity thermal paper rolls for POS printers',
-    specs: ['50 Rolls Box', 'BPA Free', 'End-of-roll warning stripe']
+    image: 'https://images.unsplash.com/photo-1607344645866-009c320c5ab8?auto=format&fit=crop&w=600&q=80',
+    specs: ['50 Rolls Box', 'BPA Free', 'End-of-roll warning stripe'],
+    visibilityMode: 'all',
+    allowedMembers: [],
+    hiddenMembers: [],
+    showStockToMembers: true
   }
 ];
 

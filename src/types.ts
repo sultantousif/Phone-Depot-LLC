@@ -27,6 +27,7 @@ export type AdminView =
   | 'view-open-order'
   | 'search-order'
   // Shopping
+  | 'shop-settings'
   | 'metro-phones'
   | 'display-phones'
   | 'sim-cards'
@@ -81,6 +82,8 @@ export interface TeamMember {
   creditAllocation: number;
 }
 
+export type ProductVisibilityMode = 'all' | 'hidden' | 'selected_members' | 'exclude_members';
+
 export interface ProductItem {
   id: string;
   name: string;
@@ -91,6 +94,11 @@ export interface ProductItem {
   description: string;
   image?: string;
   specs?: string[];
+  visibilityMode?: ProductVisibilityMode;
+  allowedMembers?: string[]; // List of member usernames or IDs who CAN view this item
+  hiddenMembers?: string[];  // List of member usernames or IDs who CANNOT view this item
+  showStockToMembers?: boolean; // Whether the exact stock number is visible to members (default true)
+  isFeatured?: boolean;
 }
 
 export interface OrderCartItem {
@@ -103,8 +111,12 @@ export interface OrderCartItem {
 
 export type OrderStatus =
   | 'Pending review and approval by Admin'
-  | 'Ready for Member Review & Acceptance'
+  | 'Updated and Approved'
+  | 'Approved'
+  | 'Approved with changes by Admin'
+  | 'Approved by Admin'
   | 'Declined by Admin'
+  | 'Ready for Member Review & Acceptance'
   | 'Open'
   | 'Processing'
   | 'Approved & Processing'
@@ -130,7 +142,10 @@ export interface OrderItem {
   serviceTax?: number;
   total: number;
   paymentStatus: 'Paid' | 'Pending' | 'Overdue' | 'Credit Allocated';
-  adminDecision?: 'submitted_to_member' | 'declined';
+  itemsModifiedByAdmin?: boolean;
+  originalItems?: OrderCartItem[];
+  originalSubtotal?: number;
+  adminDecision?: 'approved' | 'approved_with_changes' | 'declined' | 'submitted_to_member';
   adminDeclineReason?: string;
   adminReviewedAt?: string;
   memberAcceptedAt?: string;
