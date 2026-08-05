@@ -1,0 +1,6 @@
+{
+  "name": "Product Distribution Website",
+  "description": "Product distribution portal with Admin and Member management, verified business addresses, purchasing credit limits, orders, payments, and invoices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
