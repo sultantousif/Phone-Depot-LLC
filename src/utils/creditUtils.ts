@@ -1,0 +1,355 @@
+import { InvoiceItem, OrderItem, PaymentItem, TeamMember } from '../types';
+
+export interface MemberCreditSummary {
+  baseCreditAllocation: number;
+  totalCommittedOrders: number;
+  totalCompletedPayments: number;
+  netDueBalance: number;
+  surplusPayment: number;
+  effectiveCreditAllocation: number;
+  availableCredit: number;
+  isNegative: boolean;
+  isSurplus: boolean;
+  remainingPct: number;
+}
+
+export interface InvoiceCreditInfo {
+  creditAllocation: number;
+  baseCreditAllocation: number;
+  remainingBalance: number;
+  usedCredit: number;
+  remainingPct: number;
+  hasCreditInfo: boolean;
+  memberDisplayName: string;
+  isNegative: boolean;
+  isSurplus: boolean;
+  surplusAmount: number;
+}
+
+export interface InvoicePaymentSummary {
+  invoiceTotal: number;
+  totalPaid: number;
+  currentBalanceDue: number;
+  isFullyPaid: boolean;
+  isPartiallyPaid: boolean;
+  status: 'Paid' | 'Partial' | 'Unpaid' | 'Overdue' | 'Processing';
+  payments: PaymentItem[];
+}
+
+/**
+ * Calculates payment history, settled payments, and current balance due for an invoice.
+ */
+export function getInvoicePaymentSummary(
+  invoice: InvoiceItem,
+  payments: PaymentItem[] = []
+): InvoicePaymentSummary {
+  const invoicePayments = payments.filter(
+    (p) => p.invoiceNumber === invoice.invoiceNumber && p.status === 'Completed'
+  );
+  const totalPaid = invoicePayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const invoiceTotal = invoice.amount || 0;
+  const currentBalanceDue = Math.max(0, invoiceTotal - totalPaid);
+  const isFullyPaid = currentBalanceDue <= 0.001;
+  const isPartiallyPaid = totalPaid > 0.001 && currentBalanceDue > 0.001;
+
+  let status: 'Paid' | 'Partial' | 'Unpaid' | 'Overdue' | 'Processing' = invoice.status;
+  if (isFullyPaid) {
+    status = 'Paid';
+  } else if (isPartiallyPaid) {
+    status = 'Partial';
+  } else if (invoice.status === 'Overdue') {
+    status = 'Overdue';
+  } else {
+    status = 'Unpaid';
+  }
+
+  return {
+    invoiceTotal,
+    totalPaid,
+    currentBalanceDue,
+    isFullyPaid,
+    isPartiallyPaid,
+    status,
+    payments: invoicePayments,
+  };
+}
+
+/**
+ * Resolves comprehensive member credit summary across all orders, invoices, and payments.
+ * Handles negative credit line (when orders surpass credit limit) and surplus credit line
+ * (when payments exceed order totals, adding extra to the credit allocation).
+ */
+export function getMemberCreditSummary(
+  memberIdentifier: {
+    username?: string;
+    tempUsername?: string;
+    id?: string;
+    name?: string;
+    creditAllocation?: number;
+  } | undefined,
+  members: TeamMember[] = [],
+  orders: OrderItem[] = [],
+  invoices: InvoiceItem[] = [],
+  payments: PaymentItem[] = [],
+  fallbackMasterLimit: number = 3200
+): MemberCreditSummary {
+  // 1. Locate member record
+  const member = members.find((m) => {
+    if (!memberIdentifier) return false;
+    if (memberIdentifier.username && m.username && m.username.toLowerCase() === memberIdentifier.username.toLowerCase()) return true;
+    if (memberIdentifier.tempUsername && m.tempUsername && m.tempUsername.toLowerCase() === memberIdentifier.tempUsername.toLowerCase()) return true;
+    if (memberIdentifier.id && m.id === memberIdentifier.id) return true;
+    if (memberIdentifier.name && m.name && m.name.toLowerCase() === memberIdentifier.name.toLowerCase()) return true;
+    return false;
+  });
+
+  const baseCreditAllocation = memberIdentifier?.creditAllocation ?? member?.creditAllocation ?? fallbackMasterLimit;
+
+  // 2. Identify all usernames and names associated with this member
+  const memberUsernames = [
+    memberIdentifier?.username?.toLowerCase(),
+    memberIdentifier?.tempUsername?.toLowerCase(),
+    member?.username?.toLowerCase(),
+    member?.tempUsername?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  const memberNames = [
+    memberIdentifier?.name?.toLowerCase(),
+    member?.name?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  const memberIds = [
+    memberIdentifier?.id,
+    member?.id,
+  ].filter(Boolean) as string[];
+
+  // 3. Filter active committed orders for this member
+  const activeOrders = orders.filter((o) => {
+    const isMemberMatch =
+      (o.memberUsername && memberUsernames.includes(o.memberUsername.toLowerCase())) ||
+      (o.memberId && memberIds.includes(o.memberId)) ||
+      (o.customerName && memberNames.some((n) => o.customerName.toLowerCase().includes(n)));
+
+    const isCommitted =
+      o.status === 'Pending review and approval by Admin' ||
+      o.status === 'Credited' ||
+      o.status === 'Updated and Approved' ||
+      o.status === 'Approved with changes by Admin' ||
+      o.status === 'Approved' ||
+      o.status === 'Approved by Admin' ||
+      o.status === 'Ready for Member Review & Acceptance' ||
+      o.status === 'Approved & Processing' ||
+      o.status === 'Open' ||
+      o.status === 'Processing' ||
+      o.status === 'Completed' ||
+      o.status === 'Shipped';
+
+    return isMemberMatch && isCommitted;
+  });
+
+  const totalCommittedOrders = activeOrders.reduce((sum, o) => sum + (o.total || o.subtotal || 0), 0);
+
+  // 4. Find member invoice numbers to also associate payments
+  const memberInvoiceNumbers = invoices
+    .filter((inv) => {
+      return (
+        (inv.memberUsername && memberUsernames.includes(inv.memberUsername.toLowerCase())) ||
+        (inv.memberId && memberIds.includes(inv.memberId)) ||
+        (inv.customerName && memberNames.some((n) => inv.customerName.toLowerCase().includes(n))) ||
+        (inv.billedTo && memberNames.some((n) => inv.billedTo.toLowerCase().includes(n)))
+      );
+    })
+    .map((inv) => inv.invoiceNumber);
+
+  // 5. Filter completed payments for this member
+  const completedPayments = payments.filter((p) => {
+    if (p.status !== 'Completed') return false;
+    if (p.memberUsername && memberUsernames.includes(p.memberUsername.toLowerCase())) return true;
+    if (p.customerName && memberNames.some((n) => p.customerName.toLowerCase().includes(n))) return true;
+    if (p.invoiceNumber && memberInvoiceNumbers.includes(p.invoiceNumber)) return true;
+    return false;
+  });
+
+  const totalCompletedPayments = completedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  // 6. Compute net balance due, surplus, and available credit
+  // Orders = $700, Payments = $0 -> Available = $500 - $700 = -$200 (Negative credit line!)
+  // Orders = $700, Payments = $800 -> Surplus = $100 -> Effective Credit = $600 -> Available = $600!
+  const netDueBalance = Math.max(0, totalCommittedOrders - totalCompletedPayments);
+  const surplusPayment = Math.max(0, totalCompletedPayments - totalCommittedOrders);
+  const effectiveCreditAllocation = baseCreditAllocation + surplusPayment;
+  const availableCredit = baseCreditAllocation - totalCommittedOrders + totalCompletedPayments;
+
+  const isNegative = availableCredit < -0.001;
+  const isSurplus = surplusPayment > 0.001;
+
+  const remainingPct = effectiveCreditAllocation > 0
+    ? Math.min(100, Math.max(0, (availableCredit / effectiveCreditAllocation) * 100))
+    : 0;
+
+  return {
+    baseCreditAllocation,
+    totalCommittedOrders,
+    totalCompletedPayments,
+    netDueBalance,
+    surplusPayment,
+    effectiveCreditAllocation,
+    availableCredit,
+    isNegative,
+    isSurplus,
+    remainingPct,
+  };
+}
+
+/**
+ * Resolves credit allocation line and available remaining credit balance for any invoice.
+ */
+export function getInvoiceCreditInfo(
+  invoice: InvoiceItem,
+  members: TeamMember[] = [],
+  orders: OrderItem[] = [],
+  invoices: InvoiceItem[] = [],
+  fallbackMasterLimit: number = 3200,
+  payments: PaymentItem[] = []
+): InvoiceCreditInfo {
+  // 1. Resolve member record
+  const member = members.find((m) => {
+    if (invoice.memberUsername) {
+      if (m.username && m.username.toLowerCase() === invoice.memberUsername.toLowerCase()) return true;
+      if (m.tempUsername && m.tempUsername.toLowerCase() === invoice.memberUsername.toLowerCase()) return true;
+    }
+    if (invoice.memberId && m.id === invoice.memberId) return true;
+    if (invoice.customerName && m.name && m.name.toLowerCase() === invoice.customerName.toLowerCase()) return true;
+    if (invoice.billedTo && m.name && invoice.billedTo.toLowerCase().includes(m.name.toLowerCase())) return true;
+    return false;
+  });
+
+  const memberDisplayName = invoice.customerName || invoice.billedTo || member?.name || invoice.memberUsername || 'Store Member';
+
+  // Compute full member credit summary
+  const creditSummary = getMemberCreditSummary(
+    {
+      username: invoice.memberUsername,
+      name: invoice.customerName || invoice.billedTo,
+      id: invoice.memberId,
+      creditAllocation: invoice.creditAllocation ?? member?.creditAllocation,
+    },
+    members,
+    orders,
+    invoices,
+    payments,
+    fallbackMasterLimit
+  );
+
+  return {
+    creditAllocation: creditSummary.effectiveCreditAllocation,
+    baseCreditAllocation: creditSummary.baseCreditAllocation,
+    remainingBalance: creditSummary.availableCredit,
+    usedCredit: creditSummary.totalCommittedOrders,
+    remainingPct: creditSummary.remainingPct,
+    hasCreditInfo: true,
+    memberDisplayName,
+    isNegative: creditSummary.isNegative,
+    isSurplus: creditSummary.isSurplus,
+    surplusAmount: creditSummary.surplusPayment,
+  };
+}
+
+/**
+ * Calculates member credit allocation, total committed orders, and remaining available balance upon order approval.
+ */
+export function calculateRemainingCreditAfterApproval(
+  targetOrder: OrderItem,
+  members: TeamMember[] = [],
+  orders: OrderItem[] = [],
+  fallbackMasterLimit: number = 3200,
+  payments: PaymentItem[] = []
+): {
+  creditAllocation: number;
+  baseCreditAllocation: number;
+  remainingBalance: number;
+  totalCommitted: number;
+  totalPaid: number;
+  orderTotal: number;
+  isNegative: boolean;
+  isSurplus: boolean;
+  surplusAmount: number;
+} {
+  const member = members.find((m) => {
+    if (targetOrder.memberUsername) {
+      if (m.username && m.username.toLowerCase() === targetOrder.memberUsername.toLowerCase()) return true;
+      if (m.tempUsername && m.tempUsername.toLowerCase() === targetOrder.memberUsername.toLowerCase()) return true;
+    }
+    if (targetOrder.memberId && m.id === targetOrder.memberId) return true;
+    if (targetOrder.customerName && m.name && m.name.toLowerCase() === targetOrder.customerName.toLowerCase()) return true;
+    return false;
+  });
+
+  const baseCreditAllocation = member?.creditAllocation ?? fallbackMasterLimit;
+  const orderTotal = targetOrder.total || targetOrder.subtotal || 0;
+
+  const memberUsernames = [
+    targetOrder.memberUsername?.toLowerCase(),
+    member?.username?.toLowerCase(),
+    member?.tempUsername?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  const memberNames = [
+    targetOrder.customerName?.toLowerCase(),
+    member?.name?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  // Sum other approved/in-process orders (excluding current target order if it exists in list)
+  const otherApprovedOrdersTotal = orders
+    .filter((o) => {
+      if (o.id === targetOrder.id || (targetOrder.orderNumber && o.orderNumber === targetOrder.orderNumber)) return false;
+      const isMemberMatch =
+        (o.memberUsername && memberUsernames.includes(o.memberUsername.toLowerCase())) ||
+        (o.customerName && memberNames.some((n) => o.customerName.toLowerCase().includes(n)));
+
+      const isApprovedOrProcessing =
+        o.status === 'Pending review and approval by Admin' ||
+        o.status === 'Credited' ||
+        o.status === 'Approved' ||
+        o.status === 'Updated and Approved' ||
+        o.status === 'Approved with changes by Admin' ||
+        o.status === 'Approved by Admin' ||
+        o.status === 'Approved & Processing' ||
+        o.status === 'Ready for Member Review & Acceptance' ||
+        o.status === 'Open' ||
+        o.status === 'Processing' ||
+        o.status === 'Completed' ||
+        o.status === 'Shipped';
+
+      return isMemberMatch && isApprovedOrProcessing;
+    })
+    .reduce((sum, o) => sum + (o.total || o.subtotal || 0), 0);
+
+  const totalCommitted = otherApprovedOrdersTotal + orderTotal;
+
+  // Member payments
+  const totalPaid = payments
+    .filter((p) => {
+      if (p.status !== 'Completed') return false;
+      if (p.memberUsername && memberUsernames.includes(p.memberUsername.toLowerCase())) return true;
+      if (p.customerName && memberNames.some((n) => p.customerName.toLowerCase().includes(n))) return true;
+      return false;
+    })
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+  const surplusAmount = Math.max(0, totalPaid - totalCommitted);
+  const creditAllocation = baseCreditAllocation + surplusAmount;
+  const remainingBalance = baseCreditAllocation - totalCommitted + totalPaid;
+
+  return {
+    creditAllocation,
+    baseCreditAllocation,
+    remainingBalance,
+    totalCommitted,
+    totalPaid,
+    orderTotal,
+    isNegative: remainingBalance < -0.001,
+    isSurplus: surplusAmount > 0.001,
+    surplusAmount,
+  };
+}

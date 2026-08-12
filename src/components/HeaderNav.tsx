@@ -20,7 +20,10 @@ import {
   Cpu as SimCardIcon,
   Headphones,
   Box,
-  SlidersHorizontal
+  SlidersHorizontal,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 import { AdminView, User } from '../types';
 
@@ -39,6 +42,8 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
 }) => {
   const [openDropdown, setOpenDropdown] = useState<'my-account' | 'my-orders' | 'shopping' | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [resetSuccessToast, setResetSuccessToast] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown on click outside
@@ -51,6 +56,24 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  const handleExecuteReset = () => {
+    try {
+      localStorage.setItem('distro_invoices', JSON.stringify([]));
+      localStorage.setItem('distro_payments', JSON.stringify([]));
+      localStorage.setItem('distro_orders', JSON.stringify([]));
+      window.dispatchEvent(new CustomEvent('distro_storage_updated'));
+      window.dispatchEvent(new CustomEvent('distro_payments_invoices_reset'));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.error(e);
+    }
+    setIsResetConfirmOpen(false);
+    setResetSuccessToast('All payments, invoices, and order balances have been reset to zero ($0.00).');
+    setTimeout(() => {
+      setResetSuccessToast(null);
+    }, 6000);
+  };
 
   const handleSelect = (view: AdminView) => {
     onSelectView(view);
@@ -209,7 +232,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                       <button
                         onClick={() => handleSelect('manage-members')}
                         id="menu-item-manage-members"
-                        className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 rounded-b-lg transition-colors ${
+                        className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 transition-colors ${
                           activeView === 'manage-members'
                             ? 'text-indigo-700 font-bold bg-indigo-50'
                             : 'text-slate-800 hover:bg-indigo-50 hover:text-indigo-600'
@@ -221,6 +244,25 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                         <div>
                           <span className="block leading-tight">Manage members</span>
                           <span className="text-[10px] text-slate-400 font-normal">Roster, credits & roles</span>
+                        </div>
+                      </button>
+
+                      {/* Requested Button: "reset payments and invoices" below "Manage members" */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenDropdown(null);
+                          setIsResetConfirmOpen(true);
+                        }}
+                        id="menu-item-reset-payments-invoices"
+                        className="w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 rounded-b-lg transition-colors text-rose-700 hover:bg-rose-50 hover:text-rose-800 cursor-pointer border-t border-rose-100/70 bg-rose-50/20"
+                      >
+                        <div className="p-1 rounded bg-rose-100 text-rose-600">
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="block leading-tight font-bold text-rose-700">Reset payments and invoices</span>
+                          <span className="text-[10px] text-rose-500 font-normal">Reset all data back to $0.00</span>
                         </div>
                       </button>
                     </>
@@ -496,6 +538,19 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                     <Users className="w-3.5 h-3.5" />
                     <span>Manage members</span>
                   </button>
+
+                  {/* Requested Mobile Reset payments and invoices Button */}
+                  <button 
+                    id="mobile-menu-item-reset-payments-invoices"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setIsResetConfirmOpen(true);
+                    }} 
+                    className="w-full text-left pl-6 py-1.5 text-xs font-bold flex items-center gap-2 text-rose-400 hover:text-rose-300 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset payments and invoices</span>
+                  </button>
                 </>
               )}
             </div>
@@ -543,6 +598,90 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               <LogOut className="w-4 h-4" /> Logout
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Reset Payments & Invoices Confirmation Modal */}
+      {isResetConfirmOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div 
+            id="reset-payments-invoices-modal"
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="p-2 bg-rose-50 text-rose-600 rounded-xl border border-rose-100">
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">Reset Payments & Invoices</h3>
+                  <p className="text-xs text-slate-500">Reset all ledger and accounting data to $0.00</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 text-lg leading-none font-bold cursor-pointer"
+                aria-label="Close"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-rose-50/60 border border-rose-200 rounded-xl text-xs text-rose-900 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-rose-950 block mb-1">Verify Calculation & Website Logic</span>
+                  <p className="text-rose-800 text-[11px] leading-relaxed">
+                    This will clear all statements, invoice records, payment histories, and order transaction balances back to zero (<strong>$0.00</strong>).
+                  </p>
+                </div>
+              </div>
+              <div className="pt-2 border-t border-rose-200/60 text-[11px] text-rose-700 space-y-1 pl-6">
+                <div>&bull; Total Invoices &rarr; <strong>0 ($0.00)</strong></div>
+                <div>&bull; Total Payments &rarr; <strong>0 ($0.00)</strong></div>
+                <div>&bull; Member Balances &amp; Drawn Credit &rarr; <strong>$0.00</strong></div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsResetConfirmOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-reset-payments-invoices"
+                onClick={handleExecuteReset}
+                className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs hover:shadow transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Reset All Data to Zero</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Reset Notification Toast */}
+      {resetSuccessToast && (
+        <div 
+          id="reset-success-toast"
+          className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl border border-slate-700 flex items-center gap-3 animate-in slide-in-from-bottom-3 duration-200"
+        >
+          <div className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
+          <span className="text-xs font-medium">{resetSuccessToast}</span>
+          <button 
+            onClick={() => setResetSuccessToast(null)}
+            className="text-slate-400 hover:text-white text-xs ml-2 cursor-pointer font-bold"
+          >
+            &times;
+          </button>
         </div>
       )}
     </header>

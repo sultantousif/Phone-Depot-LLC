@@ -111,6 +111,7 @@ export interface OrderCartItem {
 
 export type OrderStatus =
   | 'Pending review and approval by Admin'
+  | 'Credited'
   | 'Updated and Approved'
   | 'Approved'
   | 'Approved with changes by Admin'
@@ -165,18 +166,36 @@ export interface InvoiceItem {
   date: string;
   dueDate: string;
   amount: number;
-  status: 'Paid' | 'Unpaid' | 'Overdue' | 'Processing';
+  paidAmount?: number;
+  balanceDue?: number;
+  status: 'Paid' | 'Partial' | 'Unpaid' | 'Overdue' | 'Processing';
   method?: string;
   notes?: string;
+  creditAllocation?: number;
+  remainingCreditBalance?: number;
 }
+
+export type PaymentMethodOption = 
+  | 'Paid with CM'
+  | 'Paid with Cash'
+  | 'Paid with Check'
+  | 'Paid with ACH/Wire transfer'
+  | 'Credit Card'
+  | 'ACH / Wire'
+  | 'Company Credit'
+  | 'Check'
+  | string;
 
 export interface PaymentItem {
   paymentId: string;
   invoiceNumber: string;
+  orderNumber?: string;
   memberUsername?: string;
   customerName?: string;
   date: string;
   amount: number;
-  method: 'Credit Card' | 'ACH / Wire' | 'Company Credit' | 'Check';
+  method: PaymentMethodOption;
   status: 'Completed' | 'Pending' | 'Failed';
+  referenceNumber?: string;
+  notes?: string;
 }

@@ -52,6 +52,7 @@ import {
   Download
 } from 'lucide-react';
 import { downloadInvoicePdf, printOrDownloadInvoicePdf } from '../utils/generateInvoicePdf';
+import { getInvoiceCreditInfo, calculateRemainingCreditAfterApproval, getInvoicePaymentSummary, getMemberCreditSummary } from '../utils/creditUtils';
 
 interface MemberWorkspaceProps {
   user: User;
@@ -91,8 +92,6 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
            (m.tempUsername && m.tempUsername.toLowerCase() === user.username.toLowerCase())
   );
 
-  // Allocated Credit limit: from member record or user prop or master credit limit ($0 - $100,000)
-  const memberCreditLimit = currentMemberRecord?.creditAllocation ?? user.creditAllocation ?? masterCreditLimit;
   const memberStoreAddress = currentMemberRecord?.businessAddress || 
     (currentMemberRecord?.businessAddressDetails 
       ? `${currentMemberRecord.businessAddressDetails.street}, ${currentMemberRecord.businessAddressDetails.city}, ${currentMemberRecord.businessAddressDetails.state} ${currentMemberRecord.businessAddressDetails.zip}` 
@@ -147,19 +146,19 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     const handleStorageChange = () => {
       try {
         const savedOrders = localStorage.getItem('distro_orders');
-        if (savedOrders) {
+        if (savedOrders !== null) {
           setOrders((prev) => (JSON.stringify(prev) !== savedOrders ? JSON.parse(savedOrders) : prev));
         }
         const savedInvoices = localStorage.getItem('distro_invoices');
-        if (savedInvoices) {
+        if (savedInvoices !== null) {
           setInvoices((prev) => (JSON.stringify(prev) !== savedInvoices ? JSON.parse(savedInvoices) : prev));
         }
         const savedPayments = localStorage.getItem('distro_payments');
-        if (savedPayments) {
+        if (savedPayments !== null) {
           setPayments((prev) => (JSON.stringify(prev) !== savedPayments ? JSON.parse(savedPayments) : prev));
         }
         const savedMembers = localStorage.getItem('distro_team_members');
-        if (savedMembers) {
+        if (savedMembers !== null) {
           setMembers((prev) => (JSON.stringify(prev) !== savedMembers ? JSON.parse(savedMembers) : prev));
         }
         const savedMasterLimit = localStorage.getItem('distro_master_credit_limit');
@@ -175,10 +174,14 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     };
 
     window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('distro_storage_updated', handleStorageChange);
+    window.addEventListener('distro_payments_invoices_reset', handleStorageChange);
     // Also poll gently every 2s for same-window updates
     const interval = setInterval(handleStorageChange, 2000);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('distro_storage_updated', handleStorageChange);
+      window.removeEventListener('distro_payments_invoices_reset', handleStorageChange);
       clearInterval(interval);
     };
   }, []);
@@ -203,22 +206,30 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     return true; // If no username tagged, show in shared prototype
   });
 
-  // Compute used / committed credit
-  const committedCredit = memberOrders
-    .filter((o) => 
-      o.status === 'Pending review and approval by Admin' ||
-      o.status === 'Updated and Approved' ||
-      o.status === 'Approved' ||
-      o.status === 'Approved with changes by Admin' ||
-      o.status === 'Approved by Admin' ||
-      o.status === 'Ready for Member Review & Acceptance' ||
-      o.status === 'Approved & Processing' ||
-      o.status === 'Open' ||
-      o.status === 'Processing'
-    )
-    .reduce((sum, o) => sum + (o.total || o.subtotal || 0), 0);
+  // Compute full member credit summary supporting negative balance & payment surplus
+  const memberCreditSummary = getMemberCreditSummary(
+    {
+      username: user.username,
+      tempUsername: currentMemberRecord?.tempUsername,
+      id: currentMemberRecord?.id || user.memberId,
+      name: memberDisplayName,
+      creditAllocation: currentMemberRecord?.creditAllocation ?? user.creditAllocation,
+    },
+    members,
+    orders,
+    invoices,
+    payments,
+    masterCreditLimit
+  );
 
-  const availableCredit = Math.max(0, memberCreditLimit - committedCredit);
+  const baseCreditLimit = memberCreditSummary.baseCreditAllocation;
+  const memberCreditLimit = memberCreditSummary.effectiveCreditAllocation;
+  const committedCredit = memberCreditSummary.totalCommittedOrders;
+  const availableCredit = memberCreditSummary.availableCredit;
+  const isNegativeCredit = memberCreditSummary.isNegative;
+  const isSurplusCredit = memberCreditSummary.isSurplus;
+  const surplusAmount = memberCreditSummary.surplusPayment;
+  const totalCompletedPayments = memberCreditSummary.totalCompletedPayments;
 
   // Shopping / Place Order Cart State
   const [orderCart, setOrderCart] = useState<{ productId: string; qty: number }[]>([]);
@@ -274,14 +285,13 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     .filter((item): item is { productId: string; qty: number; product: ProductItem } => item !== null);
 
   const cartSubtotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
-  const isCreditExceeded = cartSubtotal > availableCredit;
   const remainingCreditAfterCart = availableCredit - cartSubtotal;
+  const willExceedCredit = remainingCreditAfterCart < -0.001;
 
   // Handle Member Order Submission
   const handleSubmitMemberOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (cartItemsWithDetails.length === 0) return;
-    if (isCreditExceeded) return;
 
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const newOrderNumber = `ORD-2026-${randomNum}`;
@@ -321,7 +331,11 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     setOrderCart([]);
     setOrderNotes('');
     setOrderSubmittedAlert(
-      `Order ${newOrderNumber} has been successfully submitted with status: "Pending review and approval by Admin".`
+      `Order ${newOrderNumber} has been successfully submitted with status: "Pending review and approval by Admin".${
+        willExceedCredit 
+          ? ` Note: This order brings your allocated credit balance to -$${Math.abs(remainingCreditAfterCart).toFixed(2)} (in negative).` 
+          : ''
+      }`
     );
   };
 
@@ -395,9 +409,29 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
           </div>
           
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs">
-              <span className="text-emerald-700 font-bold">Available Credit: </span>
-              <span className="font-mono font-extrabold text-emerald-900">${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            <div className={`px-3 py-1.5 rounded-lg text-xs border ${
+              isNegativeCredit 
+                ? 'bg-rose-50 border-rose-300 text-rose-800' 
+                : isSurplusCredit
+                ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+            }`}>
+              <span className="font-bold">
+                {isNegativeCredit ? 'Credit Line (Negative): ' : isSurplusCredit ? 'Credit Line (+Surplus): ' : 'Available Credit: '}
+              </span>
+              <span className={`font-mono font-extrabold ${isNegativeCredit ? 'text-rose-900' : 'text-emerald-900'}`}>
+                {availableCredit < 0 ? `-$${Math.abs(availableCredit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `$${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </span>
+              {isSurplusCredit && (
+                <span className="ml-1.5 text-[10px] bg-emerald-200 text-emerald-800 px-1.5 py-0.2 rounded font-bold">
+                  +${surplusAmount.toFixed(2)} Surplus
+                </span>
+              )}
+              {isNegativeCredit && (
+                <span className="ml-1.5 text-[10px] bg-rose-200 text-rose-800 px-1.5 py-0.2 rounded font-bold">
+                  Over Limit
+                </span>
+              )}
             </div>
             <button
               onClick={() => onNavigate('place-new-order')}
@@ -508,6 +542,13 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
           <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-300 rounded-full text-[10px] font-bold inline-flex items-center gap-1">
             <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
             <span>Pending review and approval by Admin</span>
+          </span>
+        );
+      case 'Credited':
+        return (
+          <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-300 rounded-full text-[10px] font-extrabold inline-flex items-center gap-1">
+            <Clock className="w-3 h-3 text-amber-600" />
+            <span>Credited</span>
           </span>
         );
       case 'Updated and Approved':
@@ -638,14 +679,20 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 <div className="text-2xl font-extrabold text-slate-900 font-mono">
                   ${memberCreditLimit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Authorized credit line set by Administrator</p>
+                {isSurplusCredit ? (
+                  <p className="text-[11px] text-emerald-700 font-semibold mt-1 flex items-center gap-1">
+                    <span>${baseCreditLimit.toLocaleString()} Base + ${surplusAmount.toFixed(2)} Payment Surplus</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-slate-500 mt-1">Authorized credit line set by Administrator</p>
+                )}
               </div>
             </div>
 
             {/* Committed / In Review */}
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs flex flex-col justify-between">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">In-Process Orders</span>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Committed Orders</span>
                 <div className="p-2 bg-amber-50 text-amber-600 rounded-lg">
                   <Clock className="w-4 h-4" />
                 </div>
@@ -654,28 +701,41 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 <div className="text-2xl font-extrabold text-amber-800 font-mono">
                   ${committedCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1">Pending approval, review or fulfillment</p>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  ${totalCompletedPayments.toFixed(2)} Total Payments Settled
+                </p>
               </div>
             </div>
 
             {/* Available to Shop */}
-            <div className="bg-emerald-950 text-white rounded-xl p-5 shadow-xs flex flex-col justify-between border border-emerald-800">
+            <div className={`rounded-xl p-5 shadow-xs flex flex-col justify-between border ${
+              isNegativeCredit 
+                ? 'bg-rose-950 text-white border-rose-800' 
+                : 'bg-emerald-950 text-white border-emerald-800'
+            }`}>
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold uppercase tracking-wider text-emerald-300">Available Shopping Credit</span>
-                <div className="p-2 bg-emerald-800 text-emerald-200 rounded-lg">
-                  <DollarSign className="w-4 h-4" />
+                <span className={`text-xs font-bold uppercase tracking-wider ${isNegativeCredit ? 'text-rose-300' : 'text-emerald-300'}`}>
+                  {isNegativeCredit ? 'Credit Line (Negative)' : 'Available Shopping Credit'}
+                </span>
+                <div className={`p-2 rounded-lg ${isNegativeCredit ? 'bg-rose-800 text-rose-200' : 'bg-emerald-800 text-emerald-200'}`}>
+                  {isNegativeCredit ? <AlertTriangle className="w-4 h-4" /> : <DollarSign className="w-4 h-4" />}
                 </div>
               </div>
               <div>
                 <div className="text-2xl font-extrabold text-white font-mono">
-                  ${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {availableCredit < 0 
+                    ? `-$${Math.abs(availableCredit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                    : `$${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </div>
-                <div className="w-full bg-emerald-900 rounded-full h-1.5 mt-2.5 overflow-hidden">
+                <div className={`w-full rounded-full h-1.5 mt-2.5 overflow-hidden ${isNegativeCredit ? 'bg-rose-900' : 'bg-emerald-900'}`}>
                   <div 
-                    className="bg-emerald-400 h-1.5 rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(100, (availableCredit / (memberCreditLimit || 1)) * 100)}%` }}
+                    className={`h-1.5 rounded-full transition-all duration-300 ${isNegativeCredit ? 'bg-rose-400' : 'bg-emerald-400'}`}
+                    style={{ width: `${Math.min(100, Math.max(0, (availableCredit / (memberCreditLimit || 1)) * 100))}%` }}
                   />
                 </div>
+                {isNegativeCredit && (
+                  <p className="text-[10px] text-rose-300 font-semibold mt-1">Orders surpass credit limit by ${Math.abs(availableCredit).toFixed(2)}</p>
+                )}
               </div>
             </div>
           </div>
@@ -828,11 +888,17 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             </div>
 
             {/* Live Credit Display */}
-            <div className="bg-emerald-900 text-white px-4 py-2 rounded-xl text-xs flex items-center gap-3">
+            <div className={`text-white px-4 py-2 rounded-xl text-xs flex items-center gap-3 ${
+              isNegativeCredit ? 'bg-rose-900' : 'bg-emerald-900'
+            }`}>
               <div>
-                <span className="text-[10px] text-emerald-300 block uppercase font-bold">Available Credit</span>
+                <span className={`text-[10px] block uppercase font-bold ${isNegativeCredit ? 'text-rose-300' : 'text-emerald-300'}`}>
+                  {isNegativeCredit ? 'Credit Line (Negative)' : 'Available Credit'}
+                </span>
                 <span className="text-sm font-extrabold font-mono text-white">
-                  ${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {availableCredit < 0 
+                    ? `-$${Math.abs(availableCredit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                    : `$${availableCredit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                 </span>
               </div>
             </div>
@@ -1001,7 +1067,9 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   <div className="bg-slate-50 rounded-lg p-3 space-y-1.5 border border-slate-200 text-xs">
                     <div className="flex justify-between text-slate-600">
                       <span>Available Allocated Credit:</span>
-                      <span className="font-mono font-bold text-slate-900">${availableCredit.toFixed(2)}</span>
+                      <span className={`font-mono font-bold ${isNegativeCredit ? 'text-rose-700' : 'text-slate-900'}`}>
+                        {availableCredit < 0 ? `-$${Math.abs(availableCredit).toFixed(2)}` : `$${availableCredit.toFixed(2)}`}
+                      </span>
                     </div>
                     <div className="flex justify-between text-slate-600">
                       <span>Order Items Subtotal:</span>
@@ -1009,19 +1077,19 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     </div>
                     <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold">
                       <span>Remaining Credit After Order:</span>
-                      <span className={`font-mono ${isCreditExceeded ? 'text-rose-600' : 'text-emerald-700'}`}>
-                        ${remainingCreditAfterCart.toFixed(2)}
+                      <span className={`font-mono ${willExceedCredit ? 'text-rose-600' : 'text-emerald-700'}`}>
+                        {remainingCreditAfterCart < 0 ? `-$${Math.abs(remainingCreditAfterCart).toFixed(2)}` : `$${remainingCreditAfterCart.toFixed(2)}`}
                       </span>
                     </div>
                   </div>
 
                   {/* Warning if Credit Limit Exceeded */}
-                  {isCreditExceeded ? (
-                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-rose-800 text-xs font-semibold flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  {willExceedCredit ? (
+                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 text-xs font-semibold flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div>
-                        <span>Credit Limit Exceeded: </span>
-                        <span>This order (${cartSubtotal.toFixed(2)}) exceeds your available allocated credit (${availableCredit.toFixed(2)}). Please reduce quantities or contact Admin.</span>
+                        <span className="font-bold">Credit Line Will Go Negative: </span>
+                        <span>This order (${cartSubtotal.toFixed(2)}) brings your credit line balance to -${Math.abs(remainingCreditAfterCart).toFixed(2)}. The order will be submitted for Admin Review & Approval.</span>
                       </div>
                     </div>
                   ) : (
@@ -1034,16 +1102,22 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   <button
                     type="button"
                     id="submit-member-order-btn"
-                    disabled={isCreditExceeded || cartItemsWithDetails.length === 0}
+                    disabled={cartItemsWithDetails.length === 0}
                     onClick={handleSubmitMemberOrder}
                     className={`w-full py-3 text-white font-bold text-xs rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      isCreditExceeded || cartItemsWithDetails.length === 0
+                      cartItemsWithDetails.length === 0
                         ? 'bg-slate-300 cursor-not-allowed text-slate-500'
+                        : willExceedCredit
+                        ? 'bg-amber-600 hover:bg-amber-700 active:scale-[0.99]'
                         : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99]'
                     }`}
                   >
                     <Send className="w-4 h-4" />
-                    <span>Submit Order for Admin Review & Approval</span>
+                    <span>
+                      {willExceedCredit 
+                        ? `Submit Order for Admin Review (Balance: -$${Math.abs(remainingCreditAfterCart).toFixed(2)})`
+                        : 'Submit Order for Admin Review & Approval'}
+                    </span>
                   </button>
 
                   <p className="text-[10px] text-slate-400 text-center leading-relaxed">
@@ -1331,91 +1405,156 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <th className="p-4">Order / Ref #</th>
                       <th className="p-4">Date</th>
                       <th className="p-4">Due Date</th>
-                      <th className="p-4">Amount</th>
+                      <th className="p-4">Total Amount</th>
+                      <th className="p-4">Current Balance Due</th>
+                      <th className="p-4">Credit Allocation (Remaining)</th>
                       <th className="p-4">Payment Method</th>
                       <th className="p-4">Status</th>
                       <th className="p-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
-                    {invoices.map((inv) => (
-                      <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
-                        <td className="p-4 font-bold font-mono text-emerald-700">
-                          <button
-                            type="button"
-                            onClick={() => setViewingMemberInvoice(inv)}
-                            className="hover:underline text-left cursor-pointer"
-                            title="View statement details"
-                          >
-                            {inv.invoiceNumber}
-                          </button>
-                        </td>
-                        <td className="p-4">
-                          {inv.title === 'Late Payment' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              Late Payment
+                    {invoices.map((inv) => {
+                      const creditInfo = getInvoiceCreditInfo(inv, members, orders, invoices, masterCreditLimit);
+                      const paymentSummary = getInvoicePaymentSummary(inv, payments);
+
+                      return (
+                        <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
+                          <td className="p-4 font-bold font-mono text-emerald-700">
+                            <button
+                              type="button"
+                              onClick={() => setViewingMemberInvoice(inv)}
+                              className="hover:underline text-left cursor-pointer"
+                              title="View statement details"
+                            >
+                              {inv.invoiceNumber}
+                            </button>
+                          </td>
+                          <td className="p-4">
+                            {inv.title === 'Late Payment' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                Late Payment
+                              </span>
+                            ) : inv.title === 'Chargeback' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                                Chargeback
+                              </span>
+                            ) : inv.title === 'Check Bounce' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                Check Bounce
+                              </span>
+                            ) : inv.title === 'Miscellenous' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                Miscellenous
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                {inv.title || 'Wholesale Order'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4 font-mono text-slate-700">{inv.orderNumber}</td>
+                          <td className="p-4 text-slate-600">{inv.date}</td>
+                          <td className="p-4 text-slate-600">{inv.dueDate}</td>
+                          <td className="p-4 font-bold text-slate-900 font-mono">${inv.amount.toFixed(2)}</td>
+
+                          {/* Current Balance Due */}
+                          <td className="p-4">
+                            {paymentSummary.currentBalanceDue > 0 ? (
+                              <div className="space-y-0.5">
+                                <span className="text-rose-700 font-extrabold font-mono text-xs block">
+                                  ${paymentSummary.currentBalanceDue.toFixed(2)} Due
+                                </span>
+                                <span className="text-[10px] text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200 inline-block">
+                                  Unsettled
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <span className="text-emerald-700 font-bold font-mono text-xs block">
+                                  $0.00
+                                </span>
+                                <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                  Settled
+                                </span>
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="p-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 font-bold">
+                                <span className={`font-mono text-xs ${creditInfo.isNegative ? 'text-rose-700 font-extrabold' : 'text-emerald-700'}`}>
+                                  {creditInfo.remainingBalance < 0 
+                                    ? `-$${Math.abs(creditInfo.remainingBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                                    : `$${creditInfo.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                </span>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded border uppercase ${
+                                  creditInfo.isNegative 
+                                    ? 'text-rose-800 bg-rose-50 border-rose-200' 
+                                    : creditInfo.isSurplus 
+                                    ? 'text-emerald-800 bg-emerald-100 border-emerald-300' 
+                                    : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                                }`}>
+                                  {creditInfo.isNegative ? 'Negative' : creditInfo.isSurplus ? `+${creditInfo.surplusAmount.toFixed(0)} Surplus` : 'Available'}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 font-medium">
+                                of <span className="font-mono font-semibold text-slate-700">${creditInfo.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span> line
+                              </div>
+                              <div className="w-24 bg-slate-100 rounded-full h-1 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full ${
+                                    creditInfo.isNegative ? 'bg-rose-500' : creditInfo.remainingPct > 50 ? 'bg-emerald-500' : creditInfo.remainingPct > 20 ? 'bg-amber-500' : 'bg-rose-500'
+                                  }`}
+                                  style={{ width: `${creditInfo.remainingPct}%` }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4 text-slate-600">{inv.method || 'Company Credit'}</td>
+                          <td className="p-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                              paymentSummary.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                              paymentSummary.status === 'Partial' ? 'bg-amber-50 text-amber-800 border border-amber-300 font-extrabold' :
+                              paymentSummary.status === 'Overdue' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                              'bg-slate-100 text-slate-700 border border-slate-300'
+                            }`}>
+                              {paymentSummary.status}
                             </span>
-                          ) : inv.title === 'Chargeback' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                              Chargeback
-                            </span>
-                          ) : inv.title === 'Check Bounce' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                              Check Bounce
-                            </span>
-                          ) : inv.title === 'Miscellenous' ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                              Miscellenous
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                              {inv.title || 'Wholesale Order'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-4 font-mono text-slate-700">{inv.orderNumber}</td>
-                        <td className="p-4 text-slate-600">{inv.date}</td>
-                        <td className="p-4 text-slate-600">{inv.dueDate}</td>
-                        <td className="p-4 font-bold text-slate-900 font-mono">${inv.amount.toFixed(2)}</td>
-                        <td className="p-4 text-slate-600">{inv.method || 'Company Credit'}</td>
-                        <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                            inv.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                            inv.status === 'Overdue' ? 'bg-red-50 text-red-700 border border-red-200' :
-                            'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}>
-                            {inv.status}
-                          </span>
-                        </td>
-                        <td className="p-4 text-right space-x-1.5 whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
-                              downloadInvoicePdf({ 
-                                invoice: inv, 
-                                order: matchingOrder,
-                                companyName: 'DistroAdmin Wholesale Distribution',
-                                companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
-                              });
-                            }}
-                            className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                            title="Print / Download PDF"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Print PDF</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setViewingMemberInvoice(inv)}
-                            className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors inline-flex cursor-pointer"
-                            title="View Statement"
-                          >
-                            <FileText className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="p-4 text-right space-x-1.5 whitespace-nowrap">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                                downloadInvoicePdf({ 
+                                  invoice: inv, 
+                                  order: matchingOrder,
+                                  companyName: 'DistroAdmin Wholesale Distribution',
+                                  companyContact: 'billing@distroadmin.com | +1 (800) 555-0199',
+                                  creditAllocation: creditInfo.creditAllocation,
+                                  remainingCreditBalance: creditInfo.remainingBalance
+                                });
+                              }}
+                              className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                              title="Print / Download PDF"
+                            >
+                              <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>Print PDF</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setViewingMemberInvoice(inv)}
+                              className="p-1.5 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors inline-flex cursor-pointer"
+                              title="View Statement"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1525,66 +1664,123 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     <th className="p-3">Invoice #</th>
                     <th className="p-3">Order #</th>
                     <th className="p-3">Date</th>
-                    <th className="p-3">Amount</th>
+                    <th className="p-3">Total Amount</th>
+                    <th className="p-3">Current Balance Due</th>
+                    <th className="p-3">Credit Allocation (Remaining)</th>
                     <th className="p-3">Status</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {filteredMemberInvoices.map((inv) => (
-                    <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
-                      <td className="p-3 font-bold font-mono text-emerald-700">
-                        <button
-                          type="button"
-                          onClick={() => setViewingMemberInvoice(inv)}
-                          className="hover:underline text-left cursor-pointer"
-                        >
-                          {inv.invoiceNumber}
-                        </button>
-                      </td>
-                      <td className="p-3 font-mono">{inv.orderNumber}</td>
-                      <td className="p-3">{inv.date}</td>
-                      <td className="p-3 font-bold font-mono text-slate-900">${inv.amount.toFixed(2)}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          inv.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                          inv.status === 'Overdue' ? 'bg-red-50 text-red-700 border border-red-200' :
-                          'bg-amber-50 text-amber-700 border border-amber-200'
-                        }`}>
-                          {inv.status}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
-                            downloadInvoicePdf({ 
-                              invoice: inv, 
-                              order: matchingOrder,
-                              companyName: 'DistroAdmin Wholesale Distribution',
-                              companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
-                            });
-                          }}
-                          className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                          title="Print / Download PDF"
-                        >
-                          <Printer className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Print PDF</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setViewingMemberInvoice(inv)}
-                          className="px-2.5 py-1 text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors cursor-pointer"
-                        >
-                          View Statement
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredMemberInvoices.map((inv) => {
+                    const creditInfo = getInvoiceCreditInfo(inv, members, orders, invoices, masterCreditLimit);
+                    const paymentSummary = getInvoicePaymentSummary(inv, payments);
+
+                    return (
+                      <tr key={inv.invoiceNumber} className="hover:bg-slate-50">
+                        <td className="p-3 font-bold font-mono text-emerald-700">
+                          <button
+                            type="button"
+                            onClick={() => setViewingMemberInvoice(inv)}
+                            className="hover:underline text-left cursor-pointer"
+                          >
+                            {inv.invoiceNumber}
+                          </button>
+                        </td>
+                        <td className="p-3 font-mono">{inv.orderNumber}</td>
+                        <td className="p-3">{inv.date}</td>
+                        <td className="p-3 font-bold font-mono text-slate-900">${inv.amount.toFixed(2)}</td>
+
+                        {/* Current Balance Due */}
+                        <td className="p-3">
+                          {paymentSummary.currentBalanceDue > 0 ? (
+                            <div className="space-y-0.5">
+                              <span className="text-rose-700 font-extrabold font-mono text-xs block">
+                                ${paymentSummary.currentBalanceDue.toFixed(2)} Due
+                              </span>
+                              <span className="text-[10px] text-rose-700 font-semibold bg-rose-50 px-1.5 py-0.2 rounded border border-rose-200 inline-block">
+                                Unsettled
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="space-y-0.5">
+                              <span className="text-emerald-700 font-bold font-mono text-xs block">
+                                $0.00
+                              </span>
+                              <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                Settled
+                              </span>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="p-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1 font-bold">
+                              <span className={`font-mono text-xs ${creditInfo.isNegative ? 'text-rose-700 font-extrabold' : 'text-emerald-700'}`}>
+                                {creditInfo.remainingBalance < 0 
+                                  ? `-$${Math.abs(creditInfo.remainingBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                                  : `$${creditInfo.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                              </span>
+                              <span className={`text-[9px] font-bold px-1 py-0.2 rounded border ${
+                                creditInfo.isNegative 
+                                  ? 'text-rose-800 bg-rose-50 border-rose-200' 
+                                  : creditInfo.isSurplus 
+                                  ? 'text-emerald-800 bg-emerald-100 border-emerald-300' 
+                                  : 'text-emerald-800 bg-emerald-50 border-emerald-200'
+                              }`}>
+                                {creditInfo.isNegative ? 'Neg' : creditInfo.isSurplus ? 'Surplus' : 'Avail'}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-500">
+                              of ${creditInfo.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            paymentSummary.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                            paymentSummary.status === 'Partial' ? 'bg-amber-50 text-amber-800 border border-amber-300 font-extrabold' :
+                            paymentSummary.status === 'Overdue' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                            'bg-slate-100 text-slate-700 border border-slate-300'
+                          }`}>
+                            {paymentSummary.status}
+                          </span>
+                        </td>
+                        <td className="p-3 text-right space-x-1.5 whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const matchingOrder = orders.find((o) => o.orderNumber === inv.orderNumber);
+                              downloadInvoicePdf({ 
+                                invoice: inv, 
+                                order: matchingOrder,
+                                companyName: 'DistroAdmin Wholesale Distribution',
+                                companyContact: 'billing@distroadmin.com | +1 (800) 555-0199',
+                                creditAllocation: creditInfo.creditAllocation,
+                                remainingCreditBalance: creditInfo.remainingBalance
+                              });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                            title="Print / Download PDF"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Print PDF</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setViewingMemberInvoice(inv)}
+                            className="px-2.5 py-1 text-[11px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors cursor-pointer"
+                          >
+                            View Statement
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                   {filteredMemberInvoices.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs">
+                      <td colSpan={7} className="p-6 text-center text-slate-400 text-xs">
                         No matching invoices found for "{invoiceSearchQuery}".
                       </td>
                     </tr>
@@ -1759,6 +1955,11 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
                   <span>Declined by Admin: {reviewingOrder.adminDeclineReason || 'Fulfillment could not be approved at this time.'}</span>
                 </div>
+              ) : reviewingOrder.status === 'Credited' ? (
+                <div className="p-3.5 bg-amber-50 border border-amber-300 text-amber-950 rounded-xl text-xs font-semibold flex items-center gap-2.5">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Order Status: <strong>Credited</strong>. Approved by Admin and funded via your allocated credit line. Actual payment settlement to Admin is pending.</span>
+                </div>
               ) : reviewingOrder.status === 'Updated and Approved' || reviewingOrder.status === 'Approved with changes by Admin' || reviewingOrder.itemsModifiedByAdmin ? (
                 <div className="p-3.5 bg-emerald-50 border border-emerald-300 text-emerald-950 rounded-xl text-xs font-semibold flex items-center gap-2.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1783,7 +1984,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 </div>
                 <div>
                   <span className="text-[10px] font-bold uppercase text-slate-400 block">Current Status</span>
-                  <span className="font-bold text-emerald-700">{reviewingOrder.status}</span>
+                  <span className={`font-bold ${reviewingOrder.status === 'Credited' ? 'text-amber-700 font-extrabold' : 'text-emerald-700'}`}>{reviewingOrder.status}</span>
                 </div>
               </div>
 
@@ -1884,6 +2085,89 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Member Credit Allocation Remaining Balance Summary Box in Review Modal */}
+                {(() => {
+                  const orderCredit = calculateRemainingCreditAfterApproval(
+                    reviewingOrder,
+                    members,
+                    orders,
+                    masterCreditLimit,
+                    payments
+                  );
+                  const remPct = orderCredit.creditAllocation > 0
+                    ? Math.min(100, Math.max(0, (orderCredit.remainingBalance / orderCredit.creditAllocation) * 100))
+                    : 0;
+
+                  return (
+                    <div className={`p-4 rounded-xl space-y-2.5 text-xs border ${
+                      orderCredit.isNegative 
+                        ? 'bg-rose-50/90 border-rose-200 text-rose-900' 
+                        : 'bg-emerald-50/90 border-emerald-200 text-emerald-800'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                          <Wallet className="w-4 h-4" />
+                          <span>Your Credit Allocation & Balance Status</span>
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          orderCredit.isNegative
+                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                            : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                        }`}>
+                          {orderCredit.isNegative 
+                            ? `Over Limit by $${Math.abs(orderCredit.remainingBalance).toFixed(2)}` 
+                            : orderCredit.isSurplus
+                            ? `+$${orderCredit.surplusAmount.toFixed(2)} Surplus Line`
+                            : `${remPct.toFixed(1)}% Credit Available`}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Credit Line</span>
+                          <span className="font-mono font-bold text-slate-900 text-sm">
+                            ${orderCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">This Order Total</span>
+                          <span className="font-mono font-bold text-blue-700 text-sm">
+                            -${reviewingOrder.total.toFixed(2)}
+                          </span>
+                        </div>
+
+                        <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
+                          <span className="text-[10px] uppercase font-bold text-slate-700 block">Remaining Credit Balance</span>
+                          <span className={`font-mono font-extrabold text-sm ${orderCredit.isNegative ? 'text-rose-700' : 'text-emerald-700'}`}>
+                            {orderCredit.remainingBalance < 0 
+                              ? `-$${Math.abs(orderCredit.remainingBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` 
+                              : `$${orderCredit.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                        <div 
+                          className={`h-1.5 rounded-full transition-all duration-300 ${orderCredit.isNegative ? 'bg-rose-500' : 'bg-emerald-600'}`}
+                          style={{ width: `${remPct}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px]">
+                        {orderCredit.isNegative ? (
+                          <span>Your active orders surpass your ${orderCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} credit limit. Balance is currently <strong>-${Math.abs(orderCredit.remainingBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> (in negative).</span>
+                        ) : orderCredit.isSurplus ? (
+                          <span>Your credit line is increased to <strong>${orderCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> thanks to a <strong>+${orderCredit.surplusAmount.toFixed(2)}</strong> surplus overpayment.</span>
+                        ) : reviewingOrder.status === 'Credited' || reviewingOrder.status === 'Approved' || reviewingOrder.status === 'Fulfilled' || reviewingOrder.status === 'Processing' ? (
+                          <span>This order has been allocated against your ${orderCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} credit limit. You have <strong>${orderCredit.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> remaining for new purchases.</span>
+                        ) : (
+                          <span>Upon approval by Admin, <strong>${reviewingOrder.total.toFixed(2)}</strong> will be drawn from your <strong>${orderCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> credit allocation.</span>
+                        )}
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Actions Footer */}
@@ -2000,7 +2284,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             </div>
 
             {/* Billing Addresses */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs mb-4">
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Issued By</span>
                 <p className="font-bold text-slate-900">DistroAdmin Distribution Inc.</p>
@@ -2015,6 +2299,123 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 <p className="text-slate-500 mt-1">Account: @{user.username}</p>
               </div>
             </div>
+
+            {/* Member Credit Allocation & Remaining Balance Summary */}
+            {(() => {
+              const invCredit = getInvoiceCreditInfo(viewingMemberInvoice, members, orders, invoices, masterCreditLimit);
+              return (
+                <div className="p-4 bg-emerald-50/80 border border-emerald-200 rounded-xl mb-6 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                      <Wallet className="w-4 h-4 text-emerald-600" />
+                      <span>Credit Allocation & Available Remaining Balance</span>
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-300">
+                      {invCredit.remainingPct.toFixed(1)}% Available
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-white p-3 rounded-lg border border-emerald-100">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Credit Line</span>
+                      <span className="font-mono font-bold text-slate-900 text-sm">
+                        ${invCredit.creditAllocation.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-emerald-100">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Invoice Billed</span>
+                      <span className="font-mono font-bold text-blue-700 text-sm">
+                        -${viewingMemberInvoice.amount.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-emerald-200">
+                      <span className="text-[10px] uppercase font-bold text-emerald-800 block">Credit Remaining Balance</span>
+                      <span className="font-mono font-extrabold text-emerald-700 text-sm">
+                        ${invCredit.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="w-full bg-emerald-200 rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      className="bg-emerald-600 h-1.5 rounded-full transition-all duration-300"
+                      style={{ width: `${invCredit.remainingPct}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Actual Settlement & Current Balance Due Breakdown Card */}
+            {(() => {
+              const paymentSummary = getInvoicePaymentSummary(viewingMemberInvoice, payments);
+              return (
+                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl mb-6 space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                      <CreditCard className="w-4 h-4 text-blue-600" />
+                      <span>Payment Settlement & Current Balance Due</span>
+                    </span>
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      paymentSummary.currentBalanceDue > 0 ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    }`}>
+                      {paymentSummary.currentBalanceDue > 0 ? `$${paymentSummary.currentBalanceDue.toFixed(2)} Balance Due` : 'Fully Settled ($0.00 Due)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-2xs">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Invoice</span>
+                      <span className="font-mono font-bold text-slate-900 text-sm">
+                        ${paymentSummary.invoiceTotal.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-blue-200 shadow-2xs">
+                      <span className="text-[10px] uppercase font-bold text-blue-800 block">Actual Payments Settled</span>
+                      <span className="font-mono font-bold text-blue-700 text-sm">
+                        ${paymentSummary.totalPaid.toFixed(2)}
+                      </span>
+                    </div>
+
+                    <div className={`p-3 rounded-lg border shadow-2xs ${
+                      paymentSummary.currentBalanceDue > 0 ? 'bg-rose-50 border-rose-300' : 'bg-emerald-50 border-emerald-300'
+                    }`}>
+                      <span className={`text-[10px] uppercase font-bold block ${
+                        paymentSummary.currentBalanceDue > 0 ? 'text-rose-800' : 'text-emerald-800'
+                      }`}>
+                        Current Balance Due
+                      </span>
+                      <span className={`font-mono font-black text-sm ${
+                        paymentSummary.currentBalanceDue > 0 ? 'text-rose-700' : 'text-emerald-700'
+                      }`}>
+                        ${paymentSummary.currentBalanceDue.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {paymentSummary.payments.length > 0 && (
+                    <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Payment Audit Trail ({paymentSummary.payments.length})</span>
+                      <div className="space-y-1">
+                        {paymentSummary.payments.map((p) => (
+                          <div key={p.paymentId} className="bg-white p-2 rounded-lg border border-slate-200 flex items-center justify-between text-[11px]">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-slate-700">{p.paymentId}</span>
+                              <span className="text-slate-500">&bull; {p.date}</span>
+                              <span className="font-semibold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-100">{p.method}</span>
+                            </div>
+                            <span className="font-mono font-bold text-emerald-700">+${p.amount.toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Items / Line Charges */}
             {(() => {
@@ -2109,8 +2510,9 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 Payment Method: <span className="font-semibold text-slate-800">{viewingMemberInvoice.method || 'Company Credit Allocation'}</span>
                 <span className={`ml-2 px-2 py-0.5 rounded font-bold ${
                   viewingMemberInvoice.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                  viewingMemberInvoice.status === 'Overdue' ? 'bg-red-50 text-red-700 border border-red-200' :
-                  'bg-amber-50 text-amber-700 border border-amber-200'
+                  viewingMemberInvoice.status === 'Partial' ? 'bg-amber-50 text-amber-800 border border-amber-300 font-extrabold' :
+                  viewingMemberInvoice.status === 'Overdue' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
+                  'bg-slate-100 text-slate-700 border border-slate-300'
                 }`}>
                   {viewingMemberInvoice.status}
                 </span>
