@@ -230,6 +230,7 @@ export const INITIAL_MEMBERS: TeamMember[] = [
     dateAdded: '2026-01-15',
     permissions: ['place-order', 'view-invoices', 'make-payments', 'view-inventory'],
     creditAllocation: 10000,
+    paymentCycleDays: 14,
   },
   {
     id: 'mem-102',
@@ -251,6 +252,7 @@ export const INITIAL_MEMBERS: TeamMember[] = [
     dateAdded: '2026-02-01',
     permissions: ['place-order', 'view-inventory'],
     creditAllocation: 10000,
+    paymentCycleDays: 14,
   },
   {
     id: 'mem-103',
@@ -272,6 +274,7 @@ export const INITIAL_MEMBERS: TeamMember[] = [
     dateAdded: '2026-02-18',
     permissions: ['place-order', 'view-invoices', 'make-payments', 'view-inventory'],
     creditAllocation: 10000,
+    paymentCycleDays: 13,
   },
   {
     id: 'mem-104',
@@ -293,6 +296,7 @@ export const INITIAL_MEMBERS: TeamMember[] = [
     dateAdded: '2026-03-05',
     permissions: ['place-order', 'view-invoices', 'make-payments'],
     creditAllocation: 10000,
+    paymentCycleDays: 14,
   }
 ];
 

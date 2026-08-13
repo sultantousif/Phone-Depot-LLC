@@ -17,7 +17,7 @@ import {
   SAMPLE_PAYMENTS
 } from '../data/sampleData';
 import { ShopSettingsManager } from './ShopSettingsManager';
-import { loadStoredProducts, PRODUCTS_UPDATED_EVENT } from '../utils/productUtils';
+import { loadStoredProducts, saveStoredProducts, PRODUCTS_UPDATED_EVENT } from '../utils/productUtils';
 import { 
   Search, 
   FileText, 
@@ -83,7 +83,8 @@ import {
   getInvoiceCreditInfo, 
   calculateRemainingCreditAfterApproval, 
   getInvoicePaymentSummary,
-  getMemberCreditSummary
+  getMemberCreditSummary,
+  getMemberPaymentCycleInfo
 } from '../utils/creditUtils';
 import { PaymentMethodOption } from '../types';
 
@@ -260,13 +261,15 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState('Main Distribution HQ - 1044 Market St, San Francisco, CA');
   const [orderSubmittedMsg, setOrderSubmittedMsg] = useState('');
+  const [orderCatalogCategory, setOrderCatalogCategory] = useState<string>('all');
+  const [orderCatalogSearch, setOrderCatalogSearch] = useState<string>('');
 
   // Team Members UI State
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState('All');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('All');
   const [activeMemberTab, setActiveMemberTab] = useState<'add' | 'list'>('add');
-  const [editingCreditMember, setEditingCreditMember] = useState<{ id: string; name: string; credit: number } | null>(null);
+  const [editingTermsMember, setEditingTermsMember] = useState<{ id: string; name: string; credit: number; paymentCycleDays: number } | null>(null);
   const [deletingMember, setDeletingMember] = useState<TeamMember | null>(null);
 
   // Master Credit Allocation Limit State (default $10,000, range $0 - $100,000)
@@ -380,6 +383,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       return 10000;
     }
   });
+  const [memberPaymentCycleDays, setMemberPaymentCycleDays] = useState<number>(14);
   const [memberPermissions, setMemberPermissions] = useState<string[]>([
     'Place Orders',
     'View Invoices'
@@ -753,16 +757,26 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       masterCreditLimit
     );
 
+    // Match member to retrieve their allocated payment cycle days
+    const matchedMember = members.find(
+      (m) =>
+        m.username.toLowerCase() === (adminReviewingOrder.memberUsername || '').toLowerCase() ||
+        m.name.toLowerCase() === (adminReviewingOrder.customerName || '').toLowerCase()
+    );
+    const memberCycleDays = matchedMember?.paymentCycleDays ?? 14;
+    const computedDueDate = new Date(Date.now() + memberCycleDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
     // Auto-generate or update invoice in distro_invoices for the member
     const newInvoice: InvoiceItem = {
       invoiceNumber: `INV-${adminReviewingOrder.orderNumber.replace('ORD-', '')}`,
       orderNumber: adminReviewingOrder.orderNumber,
       title: 'Product Purchase Order',
-      memberUsername: adminReviewingOrder.memberUsername,
+      memberId: matchedMember?.id || adminReviewingOrder.memberId,
+      memberUsername: matchedMember?.username || adminReviewingOrder.memberUsername,
       customerName: adminReviewingOrder.customerName,
       billedTo: adminReviewingOrder.customerName,
       date: new Date().toISOString().split('T')[0],
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      dueDate: computedDueDate,
       amount: orderTotal,
       paidAmount: 0,
       balanceDue: orderTotal,
@@ -771,8 +785,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       creditAllocation: creditDetails.creditAllocation,
       remainingCreditBalance: creditDetails.remainingBalance,
       notes: isItemsModifiedByAdmin
-        ? `Order updated, approved, and placed in Credited status. Amount ($${orderTotal.toFixed(2)}) drawn from credit allocation; settlement payment to admin is due.`
-        : `Order approved and placed in Credited status. Amount ($${orderTotal.toFixed(2)}) drawn from credit allocation; settlement payment to admin is due.`,
+        ? `Order updated, approved, and placed in Credited status. Amount (${orderTotal.toFixed(2)}) drawn from credit allocation; settlement payment to admin is due within ${memberCycleDays} days.`
+        : `Order approved and placed in Credited status. Amount (${orderTotal.toFixed(2)}) drawn from credit allocation; settlement payment to admin is due within ${memberCycleDays} days.`,
     };
 
     try {
@@ -810,14 +824,39 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   // Handlers for cart & order submission
   const addToCart = (productId: string) => {
+    const product = products.find((p) => p.id === productId);
+    const maxStock = product ? product.stock : 9999;
+    if (maxStock <= 0) return;
+
+    setOrderCart((prev) => {
+      const existing = prev.find((item) => item.productId === productId);
+      if (existing) {
+        if (existing.qty >= maxStock) return prev;
+        return prev.map((item) =>
+          item.productId === productId ? { ...item, qty: Math.min(maxStock, item.qty + 1) } : item
+        );
+      }
+      return [...prev, { productId, qty: 1 }];
+    });
+  };
+
+  const updateCartQty = (productId: string, qty: number) => {
+    if (qty <= 0) {
+      removeFromCart(productId);
+      return;
+    }
+    const product = products.find((p) => p.id === productId);
+    const maxStock = product ? product.stock : 9999;
+    const clampedQty = maxStock > 0 ? Math.min(qty, maxStock) : 1;
+
     setOrderCart((prev) => {
       const existing = prev.find((item) => item.productId === productId);
       if (existing) {
         return prev.map((item) =>
-          item.productId === productId ? { ...item, qty: item.qty + 1 } : item
+          item.productId === productId ? { ...item, qty: clampedQty } : item
         );
       }
-      return [...prev, { productId, qty: 1 }];
+      return [...prev, { productId, qty: clampedQty }];
     });
   };
 
@@ -887,7 +926,21 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
     } catch {}
 
-    setOrderSubmittedMsg(`Order #${orderNumber} placed for ${customerName}! It is now in "View Open Orders" ready for "$ Review & Set Fees".`);
+    // Deduct stock from realtime inventory maintained by Admin
+    const updatedProducts = products.map((p) => {
+      const inOrder = cartItemsWithDetails.find((ci) => ci.productId === p.id);
+      if (inOrder) {
+        return {
+          ...p,
+          stock: Math.max(0, p.stock - inOrder.qty),
+        };
+      }
+      return p;
+    });
+    setProducts(updatedProducts);
+    saveStoredProducts(updatedProducts);
+
+    setOrderSubmittedMsg(`Order #${orderNumber} placed for ${customerName}! Real-time inventory has been updated.`);
     setOrderCart([]);
     setTimeout(() => setOrderSubmittedMsg(''), 8000);
   };
@@ -1327,6 +1380,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       dateAdded: new Date().toISOString().split('T')[0],
       permissions: memberPermissions.length > 0 ? memberPermissions : ['Place Orders'],
       creditAllocation: memberCreditAllocation,
+      paymentCycleDays: memberPaymentCycleDays || 14,
       tempPassword: allocateTempPassword && tempPassword.trim() ? tempPassword.trim() : undefined,
       isTempUsername: allocateTempUsername,
       isTempPassword: allocateTempPassword,
@@ -1337,7 +1391,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setMembers((prev) => [newMember, ...prev]);
     setMemberFeedback({
       type: 'success',
-      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}"${newMember.tempPassword ? ` | Temp Password: "${newMember.tempPassword}"` : ''} | Business Address: "${fullBusinessAddress}" with a $${memberCreditAllocation.toLocaleString()} credit allocation.`
+      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}"${newMember.tempPassword ? ` | Temp Password: "${newMember.tempPassword}"` : ''} | Business Address: "${fullBusinessAddress}" with a ${memberCreditAllocation.toLocaleString()} credit allocation & ${memberPaymentCycleDays || 14}-day payment cycle.`
     });
 
     // Reset form
@@ -1352,6 +1406,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setBusinessCountry('United States');
     setMemberPhone('');
     setMemberCreditAllocation(masterCreditLimit);
+    setMemberPaymentCycleDays(14);
     setMemberPermissions(['Place Orders', 'View Invoices']);
     setAllocateTempUsername(false);
     setTempUsername('');
@@ -1398,16 +1453,29 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setTimeout(() => setCopiedKey(null), 2500);
   };
 
-  const handleUpdateMemberCredit = (id: string, newCredit: number) => {
-    setMembers((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, creditAllocation: newCredit } : m))
+  const handleUpdateMemberTerms = (id: string, newCredit: number, newPaymentCycleDays: number) => {
+    const updated = members.map((m) =>
+      m.id === id ? { ...m, creditAllocation: newCredit, paymentCycleDays: newPaymentCycleDays } : m
     );
+    setMembers(updated);
+    try {
+      localStorage.setItem('distro_team_members', JSON.stringify(updated));
+      window.dispatchEvent(new Event('distro_storage_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch (err) {
+      console.error('Failed to sync updated member terms:', err);
+    }
     setMemberFeedback({
       type: 'success',
-      message: `Credit allocation updated to $${newCredit.toLocaleString()} successfully.`
+      message: `Account terms updated successfully: Credit line set to ${newCredit.toLocaleString()} | Payment cycle set to ${newPaymentCycleDays} days.`
     });
-    setEditingCreditMember(null);
+    setEditingTermsMember(null);
     setTimeout(() => setMemberFeedback(null), 4000);
+  };
+
+  const handleUpdateMemberCredit = (id: string, newCredit: number) => {
+    const target = members.find((m) => m.id === id);
+    handleUpdateMemberTerms(id, newCredit, target?.paymentCycleDays ?? 14);
   };
 
   // Render Product Section Helper
@@ -1444,87 +1512,129 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {categoryProducts.map((item) => (
-            <div
-              key={item.id}
-              className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between"
-            >
-              <div>
-                {/* Product Image / Device Photo */}
-                {item.image && (
-                  <div className="mb-4 h-44 w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-100 flex items-center justify-center p-2">
-                    <img 
-                      src={item.image} 
-                      alt={item.name} 
-                      referrerPolicy="no-referrer"
-                      className="max-h-full max-w-full object-contain hover:scale-105 transition-transform duration-200" 
-                    />
-                  </div>
-                )}
+          {categoryProducts.map((item) => {
+            const inCart = orderCart.find((ci) => ci.productId === item.id);
+            const isOutOfStock = item.stock <= 0;
 
-                <div className="flex items-start justify-between mb-3">
-                  <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md text-[10px] font-mono font-bold uppercase border border-slate-200">
-                    SKU: {item.sku}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    {item.visibilityMode && item.visibilityMode !== 'all' && (
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
-                        item.visibilityMode === 'hidden' 
-                          ? 'bg-rose-50 text-rose-700 border-rose-200' 
-                          : item.visibilityMode === 'selected_members' 
-                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
-                          : 'bg-amber-50 text-amber-700 border-amber-200'
-                      }`}>
-                        {item.visibilityMode === 'hidden' ? 'Hidden' : item.visibilityMode === 'selected_members' ? 'Selected Members' : 'Custom Rules'}
-                      </span>
-                    )}
-                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                      In Stock ({item.stock})
-                    </span>
-                  </div>
-                </div>
-
-                <h3 className="text-base font-bold text-slate-900 mb-1 leading-snug">{item.name}</h3>
-                <p className="text-xs text-slate-500 mb-4">{item.description}</p>
-
-                {item.specs && (
-                  <div className="mb-4 space-y-1">
-                    {item.specs.map((spec, idx) => (
-                      <div key={idx} className="text-[11px] text-slate-600 flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        {spec}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-4 border-t border-slate-100 flex items-center justify-between mt-2">
+            return (
+              <div
+                key={item.id}
+                className={`bg-white border rounded-xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between ${
+                  inCart ? 'border-blue-400 ring-2 ring-blue-500/20 bg-blue-50/10' : 'border-slate-200'
+                }`}
+              >
                 <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">Wholesale Price</span>
-                  <span className="text-lg font-extrabold text-slate-900">${item.price.toFixed(2)}</span>
+                  {/* Product Image / Device Photo */}
+                  {item.image && (
+                    <div className="mb-4 h-44 w-full bg-slate-50 rounded-lg overflow-hidden border border-slate-100 flex items-center justify-center p-2">
+                      <img 
+                        src={item.image} 
+                        alt={item.name} 
+                        referrerPolicy="no-referrer"
+                        className="max-h-full max-w-full object-contain hover:scale-105 transition-transform duration-200" 
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-start justify-between mb-3">
+                    <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-md text-[10px] font-mono font-bold uppercase border border-slate-200">
+                      SKU: {item.sku}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {item.visibilityMode && item.visibilityMode !== 'all' && (
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                          item.visibilityMode === 'hidden' 
+                            ? 'bg-rose-50 text-rose-700 border-rose-200' 
+                            : item.visibilityMode === 'selected_members' 
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200' 
+                            : 'bg-amber-50 text-amber-700 border-amber-200'
+                        }`}>
+                          {item.visibilityMode === 'hidden' ? 'Hidden' : item.visibilityMode === 'selected_members' ? 'Selected Members' : 'Custom Rules'}
+                        </span>
+                      )}
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-md border ${
+                        isOutOfStock 
+                          ? 'text-rose-700 bg-rose-50 border-rose-200'
+                          : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                      }`}>
+                        {isOutOfStock ? 'Out of Stock (0)' : `In Stock (${item.stock})`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <h3 className="text-base font-bold text-slate-900 mb-1 leading-snug">{item.name}</h3>
+                  <p className="text-xs text-slate-500 mb-4">{item.description}</p>
+
+                  {item.specs && (
+                    <div className="mb-4 space-y-1">
+                      {item.specs.map((spec, idx) => (
+                        <div key={idx} className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                          {spec}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => onNavigate('shop-settings')}
-                    className="p-2 text-slate-500 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors border border-slate-200 cursor-pointer"
-                    title="Configure Device Image, Inventory & Member Visibility"
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5" />
-                  </button>
-                  <button
-                    onClick={() => {
-                      addToCart(item.id);
-                      onNavigate('place-new-order');
-                    }}
-                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5" /> Add to Order
-                  </button>
+
+                <div className="pt-4 border-t border-slate-100 flex items-center justify-between mt-2">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Wholesale Price</span>
+                    <span className="text-lg font-extrabold text-slate-900">${item.price.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => onNavigate('shop-settings')}
+                      className="p-2 text-slate-500 hover:text-purple-700 hover:bg-purple-50 rounded-lg transition-colors border border-slate-200 cursor-pointer"
+                      title="Configure Device Image, Inventory & Member Visibility"
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                    </button>
+                    {inCart ? (
+                      <div className="flex items-center border border-blue-300 rounded-lg bg-blue-50 p-1 shadow-2xs">
+                        <button
+                          onClick={() => updateCartQty(item.id, inCart.qty - 1)}
+                          className="w-6 h-6 flex items-center justify-center font-bold text-blue-800 hover:bg-blue-200 rounded text-xs cursor-pointer transition-colors"
+                          title="Decrease quantity"
+                        >
+                          -
+                        </button>
+                        <span className="px-2 font-mono font-bold text-xs text-blue-900 min-w-[20px] text-center">
+                          {inCart.qty}
+                        </span>
+                        <button
+                          onClick={() => updateCartQty(item.id, inCart.qty + 1)}
+                          disabled={item.stock > 0 && inCart.qty >= item.stock}
+                          className={`w-6 h-6 flex items-center justify-center font-bold text-blue-800 hover:bg-blue-200 rounded text-xs cursor-pointer transition-colors ${
+                            item.stock > 0 && inCart.qty >= item.stock ? 'opacity-40 cursor-not-allowed' : ''
+                          }`}
+                          title={item.stock > 0 && inCart.qty >= item.stock ? 'Max inventory stock reached' : 'Increase quantity'}
+                        >
+                          +
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          addToCart(item.id);
+                        }}
+                        disabled={isOutOfStock}
+                        className={`px-3.5 py-2 font-bold text-xs rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer ${
+                          isOutOfStock
+                            ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                            : 'bg-blue-600 hover:bg-blue-700 text-white'
+                        }`}
+                        title={isOutOfStock ? 'Product is currently out of stock' : 'Add to Order'}
+                      >
+                        <PlusCircle className="w-3.5 h-3.5" />
+                        <span>{isOutOfStock ? 'Out of Stock' : 'Add to Order'}</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {categoryProducts.length === 0 && (
             <div className="col-span-full p-12 bg-white border border-slate-200 rounded-xl text-center">
               <p className="text-sm font-semibold text-slate-700">No items found in this category.</p>
@@ -2299,6 +2409,83 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     </div>
                   </div>
 
+                  {/* Payment Cycle & Settlement Terms Allocation */}
+                  <div className="pt-2 border-t border-slate-100" id="member-payment-cycle-section">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                          <Clock className="w-3.5 h-3.5 text-amber-600" />
+                          <span>Allocated Payment Cycle Days (Settlement Terms)</span>
+                        </label>
+                        <p className="text-[11px] text-slate-500">
+                          Configure the settlement window in days (e.g. 14, 13) after an order is approved. Invoices must be cleared within this cycle to place future orders.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1 text-amber-900">
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Cycle:</span>
+                        <span className="text-sm font-mono font-extrabold text-amber-800">{memberPaymentCycleDays} Days</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50/80 border border-slate-200/90 rounded-xl p-4 space-y-3">
+                      {/* Presets */}
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-1">Quick Presets:</span>
+                          {[
+                            { label: '7 Days', val: 7 },
+                            { label: '10 Days', val: 10 },
+                            { label: '13 Days', val: 13 },
+                            { label: '14 Days (Standard)', val: 14 },
+                            { label: '21 Days', val: 21 },
+                            { label: '30 Days', val: 30 },
+                            { label: '45 Days', val: 45 },
+                            { label: '60 Days', val: 60 },
+                          ].map((item) => (
+                            <button
+                              key={item.val}
+                              type="button"
+                              onClick={() => setMemberPaymentCycleDays(item.val)}
+                              className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
+                                memberPaymentCycleDays === item.val
+                                  ? 'bg-amber-600 text-white border-amber-600 shadow-xs ring-1 ring-amber-500'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:border-amber-300 hover:bg-amber-50/50'
+                              }`}
+                            >
+                              {item.label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Custom Stepper */}
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <span className="text-[11px] font-medium text-slate-500">Custom Days:</span>
+                          <div className="relative w-24">
+                            <input
+                              type="number"
+                              min={1}
+                              max={180}
+                              value={memberPaymentCycleDays}
+                              onChange={(e) => {
+                                const val = Math.max(1, Math.min(180, Number(e.target.value) || 14));
+                                setMemberPaymentCycleDays(val);
+                              }}
+                              id="input-member-payment-cycle-manual"
+                              className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-md text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500 text-center"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="p-2.5 bg-amber-50/70 border border-amber-200/80 rounded-lg text-[11px] text-amber-900 flex items-start gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                        <p className="leading-relaxed">
+                          When this member places an order and it is approved, an invoice is generated due in <strong className="font-semibold">{memberPaymentCycleDays} days</strong>. In the meantime, the member can utilize their allocated credit by placing orders, but simultaneous invoice clearing must be followed to keep order placement unlocked.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Permissions Selection */}
                   <div className="pt-2 border-t border-slate-100">
                     <label className="block text-xs font-bold text-slate-700 mb-2">
@@ -2826,6 +3013,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       <th className="p-3.5">Business Address</th>
                       <th className="p-3.5">Role</th>
                       <th className="p-3.5">Credit Allocation</th>
+                      <th className="p-3.5">Payment Cycle</th>
                       <th className="p-3.5">Permissions</th>
                       <th className="p-3.5">Status</th>
                       <th className="p-3.5 text-right">Actions</th>
@@ -2843,7 +3031,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-bold text-slate-900 block leading-tight">{m.name}</span>
                                 {m.isTempUsername && (
-                                  <span className="text-[9px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded border border-blue-200">
+                                   <span className="text-[9px] bg-blue-100 text-blue-800 font-bold px-1.5 py-0.2 rounded border border-blue-200">
                                     Temp User
                                   </span>
                                 )}
@@ -2880,9 +3068,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                             return (
                               <button
                                 type="button"
-                                onClick={() => setEditingCreditMember({ id: m.id, name: m.name, credit: m.creditAllocation ?? masterCreditLimit })}
+                                onClick={() => setEditingTermsMember({ 
+                                  id: m.id, 
+                                  name: m.name, 
+                                  credit: m.creditAllocation ?? masterCreditLimit,
+                                  paymentCycleDays: m.paymentCycleDays ?? 14 
+                                })}
                                 className="text-left group/credit hover:bg-blue-50/80 p-1.5 -m-1.5 rounded-lg transition-all cursor-pointer"
-                                title="Click to adjust member credit limit ($0 - $100,000)"
+                                title="Click to adjust member credit line & payment cycle"
                               >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="font-mono font-bold text-slate-900 text-xs group-hover/credit:text-blue-700">
@@ -2918,6 +3111,43 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                             );
                           })()}
                         </td>
+                        <td className="p-3.5">
+                          {(() => {
+                            const cycleInfo = getMemberPaymentCycleInfo(m, members, invoices, payments);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => setEditingTermsMember({ 
+                                  id: m.id, 
+                                  name: m.name, 
+                                  credit: m.creditAllocation ?? masterCreditLimit,
+                                  paymentCycleDays: m.paymentCycleDays ?? 14 
+                                })}
+                                className="text-left group/cycle hover:bg-amber-50/80 p-1.5 -m-1.5 rounded-lg transition-all cursor-pointer"
+                                title="Click to adjust payment cycle days"
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <Clock className="w-3 h-3 text-amber-600" />
+                                  <span className="font-bold text-slate-900 text-xs group-hover/cycle:text-amber-800">
+                                    {cycleInfo.paymentCycleDays} Days Net
+                                  </span>
+                                  <SlidersHorizontal className="w-3 h-3 text-slate-400 group-hover/cycle:text-amber-600 opacity-60 group-hover/cycle:opacity-100" />
+                                </div>
+                                <div className="mt-1">
+                                  {cycleInfo.hasOverdueInvoices ? (
+                                    <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-1.5 py-0.5 rounded border border-rose-200 block whitespace-nowrap">
+                                      {cycleInfo.overdueInvoices.length} Overdue (${cycleInfo.overdueBalance.toFixed(0)}) &bull; Locked
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] text-emerald-700 bg-emerald-50 font-semibold px-1.5 py-0.5 rounded border border-emerald-200 block whitespace-nowrap">
+                                      Good Standing
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })()}
+                        </td>
                         <td className="p-3.5 max-w-[200px]">
                           <div className="flex flex-wrap gap-1">
                             {m.permissions.slice(0, 2).map((p, idx) => (
@@ -2943,12 +3173,17 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         </td>
                         <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                           <button
-                            onClick={() => setEditingCreditMember({ id: m.id, name: m.name, credit: m.creditAllocation ?? 5000 })}
+                            onClick={() => setEditingTermsMember({ 
+                              id: m.id, 
+                              name: m.name, 
+                              credit: m.creditAllocation ?? 5000,
+                              paymentCycleDays: m.paymentCycleDays ?? 14 
+                            })}
                             className="px-2 py-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 rounded transition-colors inline-flex items-center gap-1"
-                            title="Adjust credit line"
+                            title="Adjust credit line & payment cycle"
                           >
-                            <DollarSign className="w-3 h-3" />
-                            <span>Edit Limit</span>
+                            <SlidersHorizontal className="w-3 h-3" />
+                            <span>Edit Terms</span>
                           </button>
                           <button
                             onClick={() => handleToggleMemberStatus(m.id)}
@@ -3204,85 +3439,149 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
             </div>
           )}
 
-          {/* Quick Credit Limit Adjustment Modal */}
-          {editingCreditMember && (
+          {/* Quick Terms & Credit Allocation Adjustment Modal */}
+          {editingTermsMember && (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
                 <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                   <div className="flex items-center space-x-2.5">
                     <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                      <Wallet className="w-5 h-5" />
+                      <SlidersHorizontal className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900">Adjust Credit Allocation</h3>
-                      <p className="text-xs text-slate-500">{editingCreditMember.name}</p>
+                      <h3 className="text-sm font-bold text-slate-900">Manage Account Terms & Credit Line</h3>
+                      <p className="text-xs text-slate-500 font-medium">{editingTermsMember.name}</p>
                     </div>
                   </div>
                   <button
-                    onClick={() => setEditingCreditMember(null)}
-                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+                    onClick={() => setEditingTermsMember(null)}
+                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 text-lg leading-none font-bold"
                   >
-                    <Trash2 className="hidden" />
-                    <span className="text-lg leading-none font-bold">&times;</span>
+                    &times;
                   </button>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-3.5">
-                    <span className="text-xs font-semibold text-slate-600">Selected Limit</span>
-                    <span className="text-xl font-mono font-extrabold text-blue-700">
-                      ${editingCreditMember.credit.toLocaleString()}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-[11px] font-semibold text-slate-500">
-                      <span>$0 (No Credit)</span>
-                      <span>$50,000</span>
-                      <span>$100,000 (Max)</span>
+                <div className="space-y-5">
+                  {/* Credit Allocation Block */}
+                  <div className="space-y-3 p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Wallet className="w-4 h-4 text-blue-600" />
+                        <span className="text-xs font-bold text-slate-800">Allocated Credit Line</span>
+                      </div>
+                      <span className="text-lg font-mono font-extrabold text-blue-700">
+                        ${editingTermsMember.credit.toLocaleString()}
+                      </span>
                     </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100000}
-                      step={500}
-                      value={editingCreditMember.credit}
-                      onChange={(e) =>
-                        setEditingCreditMember((prev) =>
-                          prev ? { ...prev, credit: Number(e.target.value) } : null
-                        )
-                      }
-                      className="w-full h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                    />
-                  </div>
 
-                  {/* Preset quick buttons */}
-                  <div className="grid grid-cols-6 gap-1.5">
-                    {[0, 10000, 25000, 50000, 75000, 100000].map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        onClick={() =>
-                          setEditingCreditMember((prev) =>
-                            prev ? { ...prev, credit: preset } : null
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-[10px] font-semibold text-slate-500">
+                        <span>$0 (No Credit)</span>
+                        <span>$50,000</span>
+                        <span>$100,000 (Max)</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100000}
+                        step={500}
+                        value={editingTermsMember.credit}
+                        onChange={(e) =>
+                          setEditingTermsMember((prev) =>
+                            prev ? { ...prev, credit: Number(e.target.value) } : null
                           )
                         }
-                        className={`py-1 text-[11px] font-bold rounded border transition-all cursor-pointer ${
-                          editingCreditMember.credit === preset
-                            ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                            : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
-                        }`}
-                      >
-                        {preset === 0 ? '$0' : `$${preset / 1000}k`}
-                      </button>
-                    ))}
+                        className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                      />
+                    </div>
+
+                    {/* Preset quick buttons */}
+                    <div className="grid grid-cols-6 gap-1">
+                      {[0, 10000, 25000, 50000, 75000, 100000].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() =>
+                            setEditingTermsMember((prev) =>
+                              prev ? { ...prev, credit: preset } : null
+                            )
+                          }
+                          className={`py-1 text-[10px] font-bold rounded border transition-all cursor-pointer ${
+                            editingTermsMember.credit === preset
+                              ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                          }`}
+                        >
+                          {preset === 0 ? '$0' : `${preset / 1000}k`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Payment Cycle Days Block */}
+                  <div className="space-y-3 p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-amber-600" />
+                        <span className="text-xs font-bold text-slate-800">Payment Cycle Terms</span>
+                      </div>
+                      <div className="flex items-center gap-1 bg-amber-100 border border-amber-300 rounded-md px-2 py-0.5 text-amber-900">
+                        <span className="text-xs font-mono font-extrabold">{editingTermsMember.paymentCycleDays} Days Net</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-slate-600 leading-relaxed">
+                      Approved orders generate an invoice due in <strong className="font-semibold text-amber-900">{editingTermsMember.paymentCycleDays} days</strong>. The member can use available credit freely during this period, but exceeding the window requires clearing overdue invoices to place new orders.
+                    </p>
+
+                    {/* Preset cycle buttons */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {[7, 10, 13, 14, 21, 30, 45, 60].map((days) => (
+                        <button
+                          key={days}
+                          type="button"
+                          onClick={() =>
+                            setEditingTermsMember((prev) =>
+                              prev ? { ...prev, paymentCycleDays: days } : null
+                            )
+                          }
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition-all cursor-pointer ${
+                            editingTermsMember.paymentCycleDays === days
+                              ? 'bg-amber-600 text-white border-amber-600 shadow-xs ring-1 ring-amber-500'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-amber-300 hover:bg-amber-50'
+                          }`}
+                        >
+                          {days} Days {days === 14 ? '(Default)' : ''}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Fine-tune custom days */}
+                    <div className="flex items-center justify-between pt-1 border-t border-amber-200/60">
+                      <span className="text-[11px] font-medium text-slate-600">Custom Cycle Duration:</span>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={1}
+                          max={180}
+                          value={editingTermsMember.paymentCycleDays}
+                          onChange={(e) =>
+                            setEditingTermsMember((prev) =>
+                              prev ? { ...prev, paymentCycleDays: Math.max(1, Math.min(180, Number(e.target.value) || 14)) } : null
+                            )
+                          }
+                          className="w-20 px-2 py-1 bg-white border border-slate-300 rounded text-xs font-mono font-bold text-center text-slate-800 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <span className="text-xs text-slate-500">Days</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
                   <button
                     type="button"
-                    onClick={() => setEditingCreditMember(null)}
+                    onClick={() => setEditingTermsMember(null)}
                     className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
                   >
                     Cancel
@@ -3290,11 +3589,15 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   <button
                     type="button"
                     onClick={() =>
-                      handleUpdateMemberCredit(editingCreditMember.id, editingCreditMember.credit)
+                      handleUpdateMemberTerms(
+                        editingTermsMember.id, 
+                        editingTermsMember.credit, 
+                        editingTermsMember.paymentCycleDays
+                      )
                     }
                     className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
                   >
-                    Save Allocation
+                    Save Account Terms
                   </button>
                 </div>
               </div>
@@ -4896,39 +5199,189 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Catalog Selector */}
             <div className="lg:col-span-2 space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Quick Catalog Selection</h3>
-                <span className="text-[11px] text-slate-400 font-medium">Click + to add item to batch order</span>
-              </div>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {products.map((item) => (
-                  <div key={item.id} className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex items-center justify-between hover:border-blue-200 transition-all gap-3">
-                    {item.image && (
-                      <div className="w-12 h-12 shrink-0 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center p-1 overflow-hidden">
-                        <img src={item.image} alt={item.name} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
-                      </div>
-                    )}
-                    <div className="flex-1 min-w-0 pr-1">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <span className="text-[10px] font-mono font-bold text-slate-400 block">{item.sku}</span>
-                        <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded">
-                          Stock: {item.stock}
-                        </span>
-                      </div>
-                      <h4 className="font-bold text-slate-900 text-xs line-clamp-1">{item.name}</h4>
-                      <span className="text-xs font-bold text-blue-600">${item.price.toFixed(2)}</span>
-                    </div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">Quick Catalog Selection</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">Select product cards or adjust quantities using - / + buttons</p>
+                </div>
+
+                <div className="relative w-full sm:w-60">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={orderCatalogSearch}
+                    onChange={(e) => setOrderCatalogSearch(e.target.value)}
+                    placeholder="Search by name or SKU..."
+                    className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {orderCatalogSearch && (
                     <button
-                      onClick={() => addToCart(item.id)}
-                      className="p-2 bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white rounded-lg transition-colors border border-blue-100 shrink-0 cursor-pointer"
-                      title="Add to order"
+                      onClick={() => setOrderCatalogSearch('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
                     >
-                      <PlusCircle className="w-4 h-4" />
+                      &times;
                     </button>
-                  </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Category Filter Pills */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                {[
+                  { id: 'all', label: 'All Products' },
+                  { id: 'metro-phones', label: 'Phones' },
+                  { id: 'display-phones', label: 'Dummy Models' },
+                  { id: 'sim-cards', label: 'SIM Cards' },
+                  { id: 'accessories', label: 'Accessories' },
+                  { id: 'supplies', label: 'Supplies' }
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setOrderCatalogCategory(cat.id)}
+                    className={`px-3 py-1.5 rounded-lg font-bold text-[11px] whitespace-nowrap transition-all cursor-pointer ${
+                      orderCatalogCategory === cat.id
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
                 ))}
               </div>
+              
+              {(() => {
+                const filtered = products.filter((p) => {
+                  const matchesCat = orderCatalogCategory === 'all' || p.category === orderCatalogCategory;
+                  const q = orderCatalogSearch.toLowerCase().trim();
+                  const matchesSearch = !q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+                  return matchesCat && matchesSearch;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="p-8 bg-white border border-slate-200 rounded-xl text-center">
+                      <p className="text-xs font-semibold text-slate-600">No items match your filter.</p>
+                      <button
+                        onClick={() => { setOrderCatalogCategory('all'); setOrderCatalogSearch(''); }}
+                        className="mt-2 text-xs font-bold text-blue-600 hover:underline"
+                      >
+                        Reset filters
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {filtered.map((item) => {
+                      const inCart = orderCart.find((ci) => ci.productId === item.id);
+                      const isOutOfStock = item.stock <= 0;
+
+                      return (
+                        <div 
+                          key={item.id} 
+                          className={`bg-white border rounded-xl p-4 shadow-2xs transition-all flex flex-col justify-between gap-3 ${
+                            inCart 
+                              ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/10' 
+                              : 'border-slate-200 hover:border-blue-200'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            {item.image ? (
+                              <div className="w-16 h-16 shrink-0 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center p-1.5 overflow-hidden">
+                                <img src={item.image} alt={item.name} referrerPolicy="no-referrer" className="max-h-full max-w-full object-contain" />
+                              </div>
+                            ) : (
+                              <div className="w-16 h-16 shrink-0 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400">
+                                <Box className="w-6 h-6" />
+                              </div>
+                            )}
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                <span className="text-[10px] font-mono font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                                  {item.sku}
+                                </span>
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                                  isOutOfStock 
+                                    ? 'text-rose-700 bg-rose-50 border-rose-200' 
+                                    : 'text-emerald-700 bg-emerald-50 border-emerald-200'
+                                }`}>
+                                  {isOutOfStock ? 'Out of Stock (0)' : `In Stock: ${item.stock}`}
+                                </span>
+                              </div>
+                              <h4 className="font-bold text-slate-900 text-xs leading-snug line-clamp-2" title={item.name}>
+                                {item.name}
+                              </h4>
+                              <div className="mt-1 flex items-baseline gap-1">
+                                <span className="text-sm font-extrabold text-blue-600">${item.price.toFixed(2)}</span>
+                                <span className="text-[10px] text-slate-400 font-medium">/ unit</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action area: - / + quantity stepper or Add button */}
+                          <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between">
+                            <span className="text-[11px] text-slate-500 font-medium">
+                              {inCart ? (
+                                <span className="text-blue-700 font-bold">
+                                  Selected: {inCart.qty} units (${(item.price * inCart.qty).toFixed(2)})
+                                </span>
+                              ) : isOutOfStock ? (
+                                <span className="text-rose-600 font-semibold">Unavailable</span>
+                              ) : (
+                                <span className="text-slate-400">Not in order</span>
+                              )}
+                            </span>
+
+                            {inCart ? (
+                              <div className="flex items-center border border-blue-400 rounded-lg bg-blue-50 p-1 shadow-2xs">
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartQty(item.id, inCart.qty - 1)}
+                                  className="w-7 h-7 flex items-center justify-center font-bold text-blue-900 hover:bg-blue-200 rounded text-sm cursor-pointer transition-colors"
+                                  title="Decrease quantity"
+                                >
+                                  -
+                                </button>
+                                <span className="px-2.5 font-mono font-extrabold text-xs text-blue-950 min-w-[24px] text-center">
+                                  {inCart.qty}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => updateCartQty(item.id, inCart.qty + 1)}
+                                  disabled={item.stock > 0 && inCart.qty >= item.stock}
+                                  className={`w-7 h-7 flex items-center justify-center font-bold text-blue-900 hover:bg-blue-200 rounded text-sm cursor-pointer transition-colors ${
+                                    item.stock > 0 && inCart.qty >= item.stock ? 'opacity-40 cursor-not-allowed' : ''
+                                  }`}
+                                  title={item.stock > 0 && inCart.qty >= item.stock ? 'Maximum available stock reached' : 'Increase quantity'}
+                                >
+                                  +
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => addToCart(item.id)}
+                                disabled={isOutOfStock}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shadow-2xs ${
+                                  isOutOfStock
+                                    ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
+                                    : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer'
+                                }`}
+                                title={isOutOfStock ? 'Item is out of stock' : 'Add item to order'}
+                              >
+                                <PlusCircle className="w-3.5 h-3.5" />
+                                <span>{isOutOfStock ? 'Out of Stock' : 'Add to Order'}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Order Form Summary */}
@@ -5014,25 +5467,69 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               </div>
 
               <div className="space-y-2 pt-2 border-t border-slate-100">
-                <span className="text-xs font-semibold text-slate-500 block">Order Items ({cartItemsWithDetails.length}):</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-700">
+                    Order Items ({cartItemsWithDetails.length}):
+                  </span>
+                  {cartItemsWithDetails.length > 0 && (
+                    <button
+                      onClick={() => setOrderCart([])}
+                      className="text-[11px] text-slate-400 hover:text-red-600 font-medium"
+                    >
+                      Clear all
+                    </button>
+                  )}
+                </div>
+
                 {cartItemsWithDetails.length === 0 ? (
-                  <p className="text-xs text-slate-400 italic py-2">No items added to order yet. Click + next to any catalog product on the left to add items.</p>
+                  <p className="text-xs text-slate-400 italic py-2">
+                    No items selected yet. Click + next to any catalog product or select cards to add items.
+                  </p>
                 ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
                     {cartItemsWithDetails.map((ci) => (
-                      <div key={ci.productId} className="flex items-center justify-between text-xs bg-slate-50 p-2 rounded-lg border border-slate-100">
-                        <div className="truncate max-w-[160px]">
-                          <span className="font-bold text-slate-800 block truncate">{ci.product.name}</span>
-                          <span className="text-[10px] text-slate-500">${ci.product.price.toFixed(2)} x {ci.qty}</span>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-bold text-slate-900">${(ci.product.price * ci.qty).toFixed(2)}</span>
+                      <div key={ci.productId} className="text-xs bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="truncate">
+                            <span className="font-bold text-slate-800 block truncate">{ci.product.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">SKU: {ci.product.sku}</span>
+                          </div>
                           <button
                             onClick={() => removeFromCart(ci.productId)}
-                            className="text-red-500 hover:text-red-700 font-bold text-xs p-1 hover:bg-red-50 rounded"
+                            className="text-slate-400 hover:text-red-600 font-bold p-1 hover:bg-red-50 rounded transition-colors"
+                            title="Remove from cart"
                           >
-                            &times;
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                          {/* Stepper inside cart drawer */}
+                          <div className="flex items-center border border-slate-200 rounded-md bg-white p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => updateCartQty(ci.productId, ci.qty - 1)}
+                              className="w-5 h-5 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded text-xs cursor-pointer"
+                            >
+                              -
+                            </button>
+                            <span className="px-2 font-mono font-bold text-xs text-slate-900">{ci.qty}</span>
+                            <button
+                              type="button"
+                              onClick={() => updateCartQty(ci.productId, ci.qty + 1)}
+                              disabled={ci.product.stock > 0 && ci.qty >= ci.product.stock}
+                              className={`w-5 h-5 flex items-center justify-center font-bold text-slate-700 hover:bg-slate-100 rounded text-xs cursor-pointer ${
+                                ci.product.stock > 0 && ci.qty >= ci.product.stock ? 'opacity-40 cursor-not-allowed' : ''
+                              }`}
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <div className="text-right">
+                            <span className="text-[10px] text-slate-400 block">${ci.product.price.toFixed(2)} ea</span>
+                            <span className="font-bold text-slate-900">${(ci.product.price * ci.qty).toFixed(2)}</span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -5044,12 +5541,12 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 <div className="pt-3 border-t border-slate-200 space-y-3">
                   <div className="flex justify-between items-center text-sm font-extrabold text-slate-900">
                     <span>Total Amount:</span>
-                    <span className="text-blue-600">${cartTotal.toFixed(2)}</span>
+                    <span className="text-blue-600 text-base">${cartTotal.toFixed(2)}</span>
                   </div>
 
                   <button
                     onClick={handleSubmitOrder}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors"
+                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
                   >
                     Submit Purchase Order
                   </button>

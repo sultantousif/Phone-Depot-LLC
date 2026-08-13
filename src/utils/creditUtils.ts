@@ -116,7 +116,7 @@ export function getMemberCreditSummary(
   const memberNames = [
     memberIdentifier?.name?.toLowerCase(),
     member?.name?.toLowerCase(),
-  ].filter(Boolean) as string[];
+  ].filter((n): n is string => Boolean(n && n.trim().length >= 3));
 
   const memberIds = [
     memberIdentifier?.id,
@@ -353,3 +353,137 @@ export function calculateRemainingCreditAfterApproval(
     surplusAmount,
   };
 }
+
+export interface MemberPaymentCycleInfo {
+  paymentCycleDays: number;
+  hasOverdueInvoices: boolean;
+  overdueInvoices: InvoiceItem[];
+  overdueBalance: number;
+  upcomingInvoices: InvoiceItem[];
+  upcomingBalance: number;
+  oldestOverdueInvoice: InvoiceItem | null;
+  maxDaysOverdue: number;
+  canPlaceOrders: boolean;
+  restrictionReason?: string;
+  inGoodStanding: boolean;
+  activeCycleSummary: string;
+}
+
+/**
+ * Evaluates payment cycle compliance for a member.
+ * - Enforces that every approved order's invoice must be paid within the member's allocated payment cycle days (default: 14 days).
+ * - If an invoice is past its due date with an outstanding balance, future order placement is restricted until cleared.
+ * - In the meantime (within the payment cycle window), the member can freely max out their shopping credit line while simultaneously clearing invoices.
+ */
+export function getMemberPaymentCycleInfo(
+  memberIdentifier: {
+    username?: string;
+    tempUsername?: string;
+    id?: string;
+    name?: string;
+    paymentCycleDays?: number;
+    creditAllocation?: number;
+  } | undefined,
+  members: TeamMember[] = [],
+  invoices: InvoiceItem[] = [],
+  payments: PaymentItem[] = [],
+  currentDateStr?: string
+): MemberPaymentCycleInfo {
+  const member = members.find((m) => {
+    if (!memberIdentifier) return false;
+    if (memberIdentifier.username && m.username && m.username.toLowerCase() === memberIdentifier.username.toLowerCase()) return true;
+    if (memberIdentifier.tempUsername && m.tempUsername && m.tempUsername.toLowerCase() === memberIdentifier.tempUsername.toLowerCase()) return true;
+    if (memberIdentifier.id && m.id === memberIdentifier.id) return true;
+    if (memberIdentifier.name && m.name && m.name.toLowerCase() === memberIdentifier.name.toLowerCase()) return true;
+    return false;
+  });
+
+  const paymentCycleDays = memberIdentifier?.paymentCycleDays ?? member?.paymentCycleDays ?? 14;
+  const todayStr = currentDateStr || new Date().toISOString().split('T')[0];
+
+  const memberUsernames = [
+    memberIdentifier?.username?.toLowerCase(),
+    memberIdentifier?.tempUsername?.toLowerCase(),
+    member?.username?.toLowerCase(),
+    member?.tempUsername?.toLowerCase(),
+  ].filter(Boolean) as string[];
+
+  const memberNames = [
+    memberIdentifier?.name?.toLowerCase(),
+    member?.name?.toLowerCase(),
+  ].filter((n): n is string => Boolean(n && n.trim().length >= 3));
+
+  const memberIds = [
+    memberIdentifier?.id,
+    member?.id,
+  ].filter(Boolean) as string[];
+
+  // Filter invoices for this member
+  const memberInvoices = invoices.filter((inv) => {
+    if (inv.memberUsername && memberUsernames.includes(inv.memberUsername.toLowerCase())) return true;
+    if (inv.memberId && memberIds.includes(inv.memberId)) return true;
+    if (inv.customerName && memberNames.some((n) => inv.customerName.toLowerCase().includes(n))) return true;
+    if (inv.billedTo && memberNames.some((n) => inv.billedTo.toLowerCase().includes(n))) return true;
+    return false;
+  });
+
+  function memberInvoicesLengthCheck(allInvs: InvoiceItem[], idObj?: { username?: string; id?: string }) {
+    // If running in sample environment where invoices may lack explicit IDs
+    if (!idObj?.username && !idObj?.id) return true;
+    return false;
+  }
+
+  const overdueInvoices: InvoiceItem[] = [];
+  const upcomingInvoices: InvoiceItem[] = [];
+  let overdueBalance = 0;
+  let upcomingBalance = 0;
+  let oldestOverdueInvoice: InvoiceItem | null = null;
+  let maxDaysOverdue = 0;
+
+  for (const inv of memberInvoices) {
+    const paymentSummary = getInvoicePaymentSummary(inv, payments);
+    if (paymentSummary.currentBalanceDue > 0.001) {
+      const isPastDue = inv.dueDate && todayStr > inv.dueDate;
+      if (isPastDue) {
+        overdueInvoices.push(inv);
+        overdueBalance += paymentSummary.currentBalanceDue;
+        const diffTime = Math.max(0, new Date(todayStr).getTime() - new Date(inv.dueDate).getTime());
+        const daysOverdue = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        if (daysOverdue > maxDaysOverdue) {
+          maxDaysOverdue = daysOverdue;
+          oldestOverdueInvoice = inv;
+        }
+      } else {
+        upcomingInvoices.push(inv);
+        upcomingBalance += paymentSummary.currentBalanceDue;
+      }
+    }
+  }
+
+  const hasOverdueInvoices = overdueInvoices.length > 0;
+  const inGoodStanding = !hasOverdueInvoices;
+  const canPlaceOrders = inGoodStanding;
+
+  let restrictionReason: string | undefined;
+  if (hasOverdueInvoices) {
+    restrictionReason = `Order placement restricted: ${overdueInvoices.length} invoice${overdueInvoices.length === 1 ? '' : 's'} totaling ${overdueBalance.toFixed(2)} are past your ${paymentCycleDays}-day payment cycle (due on ${oldestOverdueInvoice?.dueDate || 'past due date'}). Simultaneous invoice clearing is required to restore order placement privileges.`;
+  }
+
+  const activeCycleSummary = `${paymentCycleDays}-Day Payment Cycle (Net ${paymentCycleDays})`;
+
+  return {
+    paymentCycleDays,
+    hasOverdueInvoices,
+    overdueInvoices,
+    overdueBalance,
+    upcomingInvoices,
+    upcomingBalance,
+    oldestOverdueInvoice,
+    maxDaysOverdue,
+    canPlaceOrders,
+    restrictionReason,
+    inGoodStanding,
+    activeCycleSummary,
+  };
+}
+

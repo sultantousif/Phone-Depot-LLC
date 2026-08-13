@@ -35,12 +35,14 @@ export default function App() {
     setCurrentUser({
       username,
       role,
+      memberId: memberData?.memberId,
       name: memberData?.name || (role === 'admin' ? 'Administrator' : username),
       email: memberData?.email,
       phone: memberData?.phone,
       storeLocation: memberData?.storeLocation,
       businessAddress: memberData?.businessAddress,
       creditAllocation: memberData?.creditAllocation ?? (role === 'member' ? masterLimit : undefined),
+      paymentCycleDays: memberData?.paymentCycleDays ?? (role === 'member' ? 14 : undefined),
     });
     setLoginModalOpen(false);
     setLoginModalRole(null);

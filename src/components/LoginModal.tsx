@@ -75,6 +75,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           storeLocation: matchedMember.storeLocation,
           businessAddress: matchedMember.businessAddress,
           creditAllocation: matchedMember.creditAllocation,
+          paymentCycleDays: matchedMember.paymentCycleDays,
         }
       : undefined;
 

@@ -10,6 +10,7 @@ export interface User {
   storeLocation?: string;
   businessAddress?: string;
   creditAllocation?: number;
+  paymentCycleDays?: number;
 }
 
 export type AdminView = 
@@ -80,6 +81,7 @@ export interface TeamMember {
   dateAdded: string;
   permissions: string[];
   creditAllocation: number;
+  paymentCycleDays?: number;
 }
 
 export type ProductVisibilityMode = 'all' | 'hidden' | 'selected_members' | 'exclude_members';
