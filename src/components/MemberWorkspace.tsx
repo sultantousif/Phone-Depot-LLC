@@ -44,6 +44,7 @@ import {
   Truck,
   Receipt,
   Percent,
+  ShieldCheck,
   ArrowRight,
   RefreshCw,
   Send,
@@ -320,6 +321,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
       shippingFee: 0,
       salesTax: 0,
       serviceTax: 0,
+      overpackFee: 0,
+      insuranceFee: 0,
       total: cartSubtotal, // Base subtotal before Admin adds shipping/taxes
       paymentStatus: 'Credit Allocated',
       notes: orderNotes.trim() || undefined,
@@ -1202,7 +1205,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100 font-medium">
                     {openMemberOrders.map((ord) => {
-                      const totalFees = (ord.shippingFee || 0) + (ord.salesTax || 0) + (ord.serviceTax || 0);
+                      const totalFees = (ord.shippingFee || 0) + (ord.salesTax || 0) + (ord.serviceTax || 0) + (ord.overpackFee || 0) + (ord.insuranceFee || 0);
                       const hasAdminFees = ord.shippingFee !== undefined || ord.salesTax !== undefined;
 
                       return (
@@ -1597,6 +1600,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <th className="p-4">Invoice #</th>
                       <th className="p-4">Date</th>
                       <th className="p-4">Method</th>
+                      <th className="p-4">Ref / Check #</th>
                       <th className="p-4">Amount</th>
                       <th className="p-4">Status</th>
                     </tr>
@@ -1607,7 +1611,26 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                         <td className="p-4 font-bold font-mono text-emerald-700">{p.paymentId}</td>
                         <td className="p-4 font-mono text-slate-700">{p.invoiceNumber}</td>
                         <td className="p-4 text-slate-600">{p.date}</td>
-                        <td className="p-4 text-slate-600">{p.method}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${
+                            p.method === 'Paid with Credit Memo' || p.method === 'Paid with Cash Memo' || p.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                            p.method === 'Paid with Cash' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                            p.method === 'Paid with Check' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                            p.method === 'Paid with ACH/Wire transfer' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                            'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}>
+                            {p.method}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          {p.referenceNumber ? (
+                            <span className="font-mono text-xs font-semibold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-200 inline-block">
+                              {p.referenceNumber}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">—</span>
+                          )}
+                        </td>
                         <td className="p-4 font-bold text-slate-900 font-mono">${p.amount.toFixed(2)}</td>
                         <td className="p-4">
                           <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold">
@@ -1798,7 +1821,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
         (p) =>
           p.paymentId.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
           p.invoiceNumber.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
-          p.method.toLowerCase().includes(paymentSearchQuery.toLowerCase())
+          p.method.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
+          (p.referenceNumber && p.referenceNumber.toLowerCase().includes(paymentSearchQuery.toLowerCase()))
       );
 
       return (
@@ -1809,7 +1833,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900">Payment Search</h2>
-              <p className="text-xs text-slate-500">Filter your payment history by ID or invoice</p>
+              <p className="text-xs text-slate-500">Filter your payment history by ID, invoice, or ref/check #</p>
             </div>
           </div>
 
@@ -1820,7 +1844,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                 type="text"
                 value={paymentSearchQuery}
                 onChange={(e) => setPaymentSearchQuery(e.target.value)}
-                placeholder="Search payment ID or invoice number..."
+                placeholder="Search payment ID, invoice number, or ref/check #..."
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
               />
             </div>
@@ -1833,6 +1857,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     <th className="p-3">Invoice #</th>
                     <th className="p-3">Date</th>
                     <th className="p-3">Method</th>
+                    <th className="p-3">Ref / Check #</th>
                     <th className="p-3">Amount</th>
                   </tr>
                 </thead>
@@ -1842,13 +1867,32 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <td className="p-3 font-bold font-mono text-emerald-700">{pay.paymentId}</td>
                       <td className="p-3 font-mono">{pay.invoiceNumber}</td>
                       <td className="p-3">{pay.date}</td>
-                      <td className="p-3 text-slate-600">{pay.method}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${
+                          pay.method === 'Paid with Credit Memo' || pay.method === 'Paid with Cash Memo' || pay.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                          pay.method === 'Paid with Cash' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                          pay.method === 'Paid with Check' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                          pay.method === 'Paid with ACH/Wire transfer' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                          'bg-slate-100 text-slate-700 border border-slate-200'
+                        }`}>
+                          {pay.method}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        {pay.referenceNumber ? (
+                          <span className="font-mono text-xs font-semibold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-200 inline-block">
+                            {pay.referenceNumber}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">—</span>
+                        )}
+                      </td>
                       <td className="p-3 font-bold font-mono text-slate-900">${pay.amount.toFixed(2)}</td>
                     </tr>
                   ))}
                   {filteredMemberPayments.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="p-6 text-center text-slate-400 text-xs">
+                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs">
                         No matching payments found for "{paymentSearchQuery}".
                       </td>
                     </tr>
@@ -2072,6 +2116,24 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     </span>
                     <span className="font-mono font-bold text-slate-900">
                       +${(reviewingOrder.serviceTax || 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <Box className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Overpack Fee:</span>
+                    </span>
+                    <span className="font-mono font-bold text-slate-900">
+                      +${(reviewingOrder.overpackFee || 0).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-slate-700">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Insurance Fee:</span>
+                    </span>
+                    <span className="font-mono font-bold text-slate-900">
+                      +${(reviewingOrder.insuranceFee || 0).toFixed(2)}
                     </span>
                   </div>
 
@@ -2425,6 +2487,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
               const shippingFee = matchingOrder?.shippingFee || 0;
               const salesTax = matchingOrder?.salesTax || 0;
               const serviceTax = matchingOrder?.serviceTax || 0;
+              const overpackFee = matchingOrder?.overpackFee || 0;
+              const insuranceFee = matchingOrder?.insuranceFee || 0;
 
               return (
                 <div className="space-y-4">
@@ -2491,6 +2555,18 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                       <div className="flex justify-between text-slate-600">
                         <span>Warehouse Processing / Service Fee:</span>
                         <span className="font-mono font-semibold text-slate-900">+${serviceTax.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {overpackFee > 0 && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>Secure Overpack / Protective Packaging:</span>
+                        <span className="font-mono font-semibold text-slate-900">+${overpackFee.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {insuranceFee > 0 && (
+                      <div className="flex justify-between text-slate-600">
+                        <span>Transit & Cargo Insurance:</span>
+                        <span className="font-mono font-semibold text-slate-900">+${insuranceFee.toFixed(2)}</span>
                       </div>
                     )}
                     <div className="pt-2 border-t border-slate-200 flex justify-between items-center">

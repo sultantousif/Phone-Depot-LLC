@@ -141,6 +141,8 @@ export interface OrderItem {
   shippingFee?: number;
   salesTax?: number;
   serviceTax?: number;
+  overpackFee?: number;
+  insuranceFee?: number;
   total: number;
   paymentStatus: 'Paid' | 'Pending' | 'Overdue' | 'Credit Allocated';
   itemsModifiedByAdmin?: boolean;
@@ -176,6 +178,8 @@ export interface InvoiceItem {
 }
 
 export type PaymentMethodOption = 
+  | 'Paid with Credit Memo'
+  | 'Paid with Cash Memo'
   | 'Paid with CM'
   | 'Paid with Cash'
   | 'Paid with Check'

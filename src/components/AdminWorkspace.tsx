@@ -257,6 +257,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   // Place order state
   const [orderCart, setOrderCart] = useState<{ productId: string; qty: number }[]>([]);
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [selectedStore, setSelectedStore] = useState('Main Distribution HQ - 1044 Market St, San Francisco, CA');
   const [orderSubmittedMsg, setOrderSubmittedMsg] = useState('');
 
@@ -526,6 +527,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   const [adminShippingFee, setAdminShippingFee] = useState<string>('15.00');
   const [adminSalesTax, setAdminSalesTax] = useState<string>('');
   const [adminServiceTax, setAdminServiceTax] = useState<string>('10.00');
+  const [adminOverpackFee, setAdminOverpackFee] = useState<string>('0.00');
+  const [adminInsuranceFee, setAdminInsuranceFee] = useState<string>('0.00');
   const [adminDeclineReason, setAdminDeclineReason] = useState<string>('Previous overdue balance on account');
   const [customDeclineReason, setCustomDeclineReason] = useState<string>('');
   const [showDeclineConfirm, setShowDeclineConfirm] = useState(false);
@@ -549,6 +552,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     const calcTax = order.salesTax !== undefined ? order.salesTax.toFixed(2) : (baseSubtotal * 0.0825).toFixed(2);
     setAdminSalesTax(calcTax);
     setAdminServiceTax(order.serviceTax !== undefined ? order.serviceTax.toFixed(2) : '10.00');
+    setAdminOverpackFee(order.overpackFee !== undefined ? order.overpackFee.toFixed(2) : '0.00');
+    setAdminInsuranceFee(order.insuranceFee !== undefined ? order.insuranceFee.toFixed(2) : '0.00');
     setShowDeclineConfirm(false);
     setAdminDeclineReason('Previous overdue balance on account');
     setCustomDeclineReason('');
@@ -630,15 +635,24 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   const parsedShipping = parseFloat(adminShippingFee);
   const parsedSalesTax = parseFloat(adminSalesTax);
   const parsedServiceTax = parseFloat(adminServiceTax);
+  const parsedOverpack = parseFloat(adminOverpackFee);
+  const parsedInsurance = parseFloat(adminInsuranceFee);
 
   const isShippingValid = !isNaN(parsedShipping) && parsedShipping >= 0 && adminShippingFee.trim() !== '';
   const isSalesTaxValid = !isNaN(parsedSalesTax) && parsedSalesTax >= 0 && adminSalesTax.trim() !== '';
   const isServiceTaxValid = !isNaN(parsedServiceTax) && parsedServiceTax >= 0 && adminServiceTax.trim() !== '';
+  const isOverpackValid = !isNaN(parsedOverpack) && parsedOverpack >= 0 && adminOverpackFee.trim() !== '';
+  const isInsuranceValid = !isNaN(parsedInsurance) && parsedInsurance >= 0 && adminInsuranceFee.trim() !== '';
 
-  const areAllThreeFeesFilled = isShippingValid && isSalesTaxValid && isServiceTaxValid;
+  const areAllFeesFilled = isShippingValid && isSalesTaxValid && isServiceTaxValid && isOverpackValid && isInsuranceValid;
 
   const currentOrderSubtotal = adminReviewingOrder ? (adminReviewingOrder.subtotal !== undefined ? adminReviewingOrder.subtotal : (adminReviewingOrder.total || 0)) : 0;
-  const adminCalculatedGrandTotal = currentOrderSubtotal + (isShippingValid ? parsedShipping : 0) + (isSalesTaxValid ? parsedSalesTax : 0) + (isServiceTaxValid ? parsedServiceTax : 0);
+  const adminCalculatedGrandTotal = currentOrderSubtotal + 
+    (isShippingValid ? parsedShipping : 0) + 
+    (isSalesTaxValid ? parsedSalesTax : 0) + 
+    (isServiceTaxValid ? parsedServiceTax : 0) +
+    (isOverpackValid ? parsedOverpack : 0) +
+    (isInsuranceValid ? parsedInsurance : 0);
 
   // Check if items have been modified from original
   const isItemsModifiedByAdmin = Boolean(
@@ -654,7 +668,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   );
 
   const handleDeclineOrderFulfillment = () => {
-    if (!adminReviewingOrder || !areAllThreeFeesFilled) return;
+    if (!adminReviewingOrder || !areAllFeesFilled) return;
     const finalReason = adminDeclineReason === 'Other' && customDeclineReason.trim()
       ? customDeclineReason.trim()
       : adminDeclineReason;
@@ -666,6 +680,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
           shippingFee: parsedShipping,
           salesTax: parsedSalesTax,
           serviceTax: parsedServiceTax,
+          overpackFee: parsedOverpack,
+          insuranceFee: parsedInsurance,
           total: adminCalculatedGrandTotal,
           status: 'Declined by Admin' as const,
           adminDecision: 'declined' as const,
@@ -686,7 +702,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   };
 
   const handleApproveOrderFulfillment = () => {
-    if (!adminReviewingOrder || !areAllThreeFeesFilled) return;
+    if (!adminReviewingOrder || !areAllFeesFilled) return;
     if (!adminReviewingOrder.items || adminReviewingOrder.items.length === 0 || adminReviewingOrder.itemsCount === 0) {
       alert("Cannot approve an order with 0 items. Please add items or decline the order.");
       return;
@@ -706,6 +722,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
           shippingFee: parsedShipping,
           salesTax: parsedSalesTax,
           serviceTax: parsedServiceTax,
+          overpackFee: parsedOverpack,
+          insuranceFee: parsedInsurance,
           total: orderTotal,
           status: finalStatus,
           itemsModifiedByAdmin: isItemsModifiedByAdmin,
@@ -813,45 +831,63 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
     const cartItemsWithDetails = orderCart.map((item) => ({
       ...item,
-      product: SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
+      product: products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
     })).filter((item) => item.product);
 
     const cartTotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
     const totalItems = cartItemsWithDetails.reduce((sum, item) => sum + item.qty, 0);
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const orderNumber = `ORD-${new Date().getFullYear()}-${randomSuffix}`;
-    const invoiceNumber = `INV-${new Date().getFullYear()}-${randomSuffix}`;
     const today = new Date().toISOString().split('T')[0];
-    const dueDate = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const selectedMember = (selectedMemberId ? members.find((m) => m.id === selectedMemberId) : null) ||
+      members.find((m) => (m.businessAddress || m.storeLocation) === selectedStore) ||
+      (members.length > 0 ? members[0] : null);
+
+    const customerName = selectedMember ? selectedMember.name : (selectedStore || 'Store Account');
+    const businessAddress = selectedMember 
+      ? (selectedMember.businessAddress || selectedMember.storeLocation || selectedStore) 
+      : selectedStore;
 
     const newOrder: OrderItem = {
-      id: `ord-${Date.now()}`,
+      id: `ord_${Date.now()}`,
       orderNumber,
       date: today,
-      status: 'Open',
-      customerName: selectedStore,
+      // EXACT STATUS: "Pending review and approval by Admin" so it appears in "View Open Orders" ready for "$ Review & Set Fees"
+      status: 'Pending review and approval by Admin',
+      customerName,
+      memberId: selectedMember?.id,
+      memberUsername: selectedMember?.username,
+      businessAddress,
+      destinationAddress: businessAddress,
+      items: cartItemsWithDetails.map((ci) => ({
+        productId: ci.productId,
+        name: ci.product.name,
+        sku: ci.product.sku,
+        price: ci.product.price,
+        qty: ci.qty,
+      })),
+      itemsCount: totalItems,
       subtotal: cartTotal,
       shippingFee: 0,
       salesTax: 0,
       serviceTax: 0,
+      overpackFee: 0,
+      insuranceFee: 0,
       total: cartTotal,
-      itemsCount: totalItems,
-      paymentStatus: 'Pending',
+      paymentStatus: 'Credit Allocated',
+      notes: selectedMember 
+        ? `Placed by Admin on behalf of ${selectedMember.name} (@${selectedMember.username})` 
+        : 'Placed by Admin on behalf of store account',
     };
 
-    const newInvoice: InvoiceItem = {
-      invoiceNumber,
-      orderNumber,
-      date: today,
-      dueDate,
-      amount: cartTotal,
-      status: 'Unpaid',
-      method: 'ACH Transfer',
-    };
+    const updatedOrders = [newOrder, ...orders];
+    setOrders(updatedOrders);
+    try {
+      localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
+    } catch {}
 
-    setOrders((prev) => [newOrder, ...prev]);
-    setInvoices((prev) => [newInvoice, ...prev]);
-    setOrderSubmittedMsg(`Order #${orderNumber} successfully submitted for ${selectedStore}! Invoice #${invoiceNumber} ($${cartTotal.toFixed(2)}) issued.`);
+    setOrderSubmittedMsg(`Order #${orderNumber} placed for ${customerName}! It is now in "View Open Orders" ready for "$ Review & Set Fees".`);
     setOrderCart([]);
     setTimeout(() => setOrderSubmittedMsg(''), 8000);
   };
@@ -3846,7 +3882,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                                                 <div className="flex items-center gap-1.5">
                                                   <span className="font-mono font-bold text-slate-900 text-xs">${p.amount.toFixed(2)}</span>
                                                   <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold ${
-                                                    p.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800' :
+                                                    p.method === 'Paid with Credit Memo' || p.method === 'Paid with Cash Memo' || p.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800' :
                                                     p.method === 'Paid with Cash' ? 'bg-emerald-100 text-emerald-800' :
                                                     p.method === 'Paid with Check' ? 'bg-purple-100 text-purple-800' :
                                                     'bg-indigo-100 text-indigo-800'
@@ -3964,7 +4000,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                                                 onChange={(e) => setPaymentMethods((prev) => ({ ...prev, [inv.invoiceNumber]: e.target.value as PaymentMethodOption }))}
                                                 className="w-full pl-3 pr-8 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white appearance-none cursor-pointer"
                                               >
-                                                <option value="Paid with CM">Paid with CM</option>
+                                                <option value="Paid with Credit Memo">Paid with Credit Memo</option>
                                                 <option value="Paid with Cash">Paid with Cash</option>
                                                 <option value="Paid with Check">Paid with Check</option>
                                                 <option value="Paid with ACH/Wire transfer">Paid with ACH/Wire transfer</option>
@@ -4200,6 +4236,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       <th className="p-4">Customer / Member</th>
                       <th className="p-4">Date</th>
                       <th className="p-4">Method</th>
+                      <th className="p-4">Ref / Check #</th>
                       <th className="p-4">Amount</th>
                       <th className="p-4">Status</th>
                       <th className="p-4 text-right">Action</th>
@@ -4217,7 +4254,31 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                             {pay.customerName || (pay.memberUsername ? `@${pay.memberUsername}` : 'Store Account')}
                           </td>
                           <td className="p-4 text-slate-600">{pay.date}</td>
-                          <td className="p-4 text-slate-600">{pay.method}</td>
+                          <td className="p-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${
+                              pay.method === 'Paid with Credit Memo' || pay.method === 'Paid with Cash Memo' || pay.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                              pay.method === 'Paid with Cash' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                              pay.method === 'Paid with Check' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                              pay.method === 'Paid with ACH/Wire transfer' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                              'bg-slate-100 text-slate-700 border border-slate-200'
+                            }`}>
+                              {pay.method}
+                            </span>
+                          </td>
+                          <td className="p-4">
+                            {pay.referenceNumber ? (
+                              <span className="font-mono text-xs font-semibold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-200 inline-block">
+                                {pay.referenceNumber}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">—</span>
+                            )}
+                            {pay.notes && (
+                              <div className="text-[10px] text-slate-400 italic mt-0.5 truncate max-w-[130px]" title={pay.notes}>
+                                Note: {pay.notes}
+                              </div>
+                            )}
+                          </td>
                           <td className="p-4 font-bold font-mono text-emerald-700">${pay.amount.toFixed(2)}</td>
                           <td className="p-4">
                             <span className="px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[10px] font-bold">
@@ -4613,7 +4674,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                                           onChange={(e) => setPaymentMethods((prev) => ({ ...prev, [inv.invoiceNumber]: e.target.value as PaymentMethodOption }))}
                                           className="w-full pl-2.5 pr-7 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none"
                                         >
-                                          <option value="Paid with CM">Paid with CM</option>
+                                          <option value="Paid with Credit Memo">Paid with Credit Memo</option>
                                           <option value="Paid with Cash">Paid with Cash</option>
                                           <option value="Paid with Check">Paid with Check</option>
                                           <option value="Paid with ACH/Wire transfer">Paid with ACH/Wire transfer</option>
@@ -4671,7 +4732,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       const filteredPayments = payments.filter(
         (p) => p.paymentId.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
                p.invoiceNumber.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
-               p.method.toLowerCase().includes(paymentSearchQuery.toLowerCase())
+               p.method.toLowerCase().includes(paymentSearchQuery.toLowerCase()) ||
+               (p.referenceNumber && p.referenceNumber.toLowerCase().includes(paymentSearchQuery.toLowerCase())) ||
+               (p.customerName && p.customerName.toLowerCase().includes(paymentSearchQuery.toLowerCase())) ||
+               (p.memberUsername && p.memberUsername.toLowerCase().includes(paymentSearchQuery.toLowerCase()))
       );
 
       return (
@@ -4682,7 +4746,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-bold text-slate-900">Payment Search</h2>
-              <p className="text-xs text-slate-500">Filter payments by ID or invoice number</p>
+              <p className="text-xs text-slate-500">Filter payments by ID, invoice number, method, or ref/check #</p>
             </div>
           </div>
 
@@ -4693,7 +4757,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 type="text"
                 value={paymentSearchQuery}
                 onChange={(e) => setPaymentSearchQuery(e.target.value)}
-                placeholder="Search payment ID or invoice number..."
+                placeholder="Search payment ID, invoice number, or ref/check #..."
                 className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
               />
             </div>
@@ -4706,6 +4770,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     <th className="p-3">Invoice #</th>
                     <th className="p-3">Date</th>
                     <th className="p-3">Method</th>
+                    <th className="p-3">Ref / Check #</th>
                     <th className="p-3">Amount</th>
                     <th className="p-3 text-right">Action</th>
                   </tr>
@@ -4719,7 +4784,26 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         <td className="p-3 font-bold text-slate-900">{pay.paymentId}</td>
                         <td className="p-3 font-bold text-blue-600">{pay.invoiceNumber}</td>
                         <td className="p-3">{pay.date}</td>
-                        <td className="p-3 text-slate-600">{pay.method}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block ${
+                            pay.method === 'Paid with Credit Memo' || pay.method === 'Paid with Cash Memo' || pay.method === 'Paid with CM' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                            pay.method === 'Paid with Cash' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                            pay.method === 'Paid with Check' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                            pay.method === 'Paid with ACH/Wire transfer' ? 'bg-indigo-100 text-indigo-800 border border-indigo-200' :
+                            'bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}>
+                            {pay.method}
+                          </span>
+                        </td>
+                        <td className="p-3">
+                          {pay.referenceNumber ? (
+                            <span className="font-mono text-xs font-semibold px-2 py-0.5 bg-slate-100 text-slate-800 rounded border border-slate-200 inline-block">
+                              {pay.referenceNumber}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic text-[11px]">—</span>
+                          )}
+                        </td>
                         <td className="p-3 font-bold text-emerald-700 font-mono">${pay.amount.toFixed(2)}</td>
                         <td className="p-3 text-right">
                           <button
@@ -4749,7 +4833,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   })}
                   {filteredPayments.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="p-6 text-center text-slate-400 text-xs">
+                      <td colSpan={7} className="p-6 text-center text-slate-400 text-xs">
                         {payments.length === 0
                           ? 'No payment transactions recorded in system yet.'
                           : `No matching payments found for "${paymentSearchQuery}".`}
@@ -4849,22 +4933,37 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
             {/* Order Form Summary */}
             <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs h-fit space-y-4">
-              <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100">Order Summary</h3>
+              <div className="pb-2 border-b border-slate-100 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-slate-900">Order Summary</h3>
+                <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                  On Behalf of Member
+                </span>
+              </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center gap-1">
-                  <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Destination / Business Address</span>
+                <label className="block text-xs font-semibold text-slate-700 mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <UserIcon className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Select Member Account</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-medium">Billed to Credit Line</span>
                 </label>
                 <select
-                  value={selectedStore}
-                  onChange={(e) => setSelectedStore(e.target.value)}
+                  value={selectedMemberId || (members.length > 0 ? members[0].id : '')}
+                  onChange={(e) => {
+                    const memId = e.target.value;
+                    setSelectedMemberId(memId);
+                    const found = members.find((m) => m.id === memId);
+                    if (found) {
+                      setSelectedStore(found.businessAddress || found.storeLocation || found.name);
+                    }
+                  }}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {members.length > 0 ? (
                     members.map((m) => (
-                      <option key={m.id} value={m.businessAddress || m.storeLocation}>
-                        {m.name} — {m.businessAddress || m.storeLocation}
+                      <option key={m.id} value={m.id}>
+                        {m.name} (@{m.username}) — {m.businessAddress || m.storeLocation || 'Main Store'}
                       </option>
                     ))
                   ) : (
@@ -4881,6 +4980,37 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     </>
                   )}
                 </select>
+
+                {(() => {
+                  const currentMem = (selectedMemberId ? members.find((m) => m.id === selectedMemberId) : null) || (members.length > 0 ? members[0] : null);
+                  if (!currentMem) return null;
+                  const cred = getMemberCreditSummary(currentMem, members, orders, invoices, payments, masterCreditLimit);
+                  return (
+                    <div className="mt-2 p-2.5 bg-slate-50 rounded-lg border border-slate-200 text-[11px] space-y-1">
+                      <div className="flex justify-between text-slate-600">
+                        <span>Role & Location:</span>
+                        <span className="font-semibold text-slate-800">{currentMem.role}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-600">
+                        <span>Available Credit:</span>
+                        <span className="font-mono font-bold text-emerald-700">${cred.availableCredit.toFixed(2)}</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate pt-0.5 border-t border-slate-100" title={currentMem.businessAddress || currentMem.storeLocation}>
+                        Ship to: {currentMem.businessAddress || currentMem.storeLocation || 'Main Distribution'}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-900 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-amber-700" />
+                  <span>Review & Fee Setup Workflow</span>
+                </div>
+                <p className="text-amber-800 leading-relaxed text-[10.5px]">
+                  Submitting will create this order under <strong>View Open Orders</strong> with status <span className="font-semibold">"Pending review and approval by Admin"</span>. You can then click <strong>"$ Review & Set Fees"</strong> to adjust items and specify Shipping, Taxes, Overpack & Insurance.
+                </p>
               </div>
 
               <div className="space-y-2 pt-2 border-t border-slate-100">
@@ -5068,7 +5198,9 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       const subtotal = ord.subtotal || ord.total;
                       const hasFees = (ord.shippingFee !== undefined && ord.shippingFee > 0) ||
                                      (ord.salesTax !== undefined && ord.salesTax > 0) ||
-                                     (ord.serviceTax !== undefined && ord.serviceTax > 0);
+                                     (ord.serviceTax !== undefined && ord.serviceTax > 0) ||
+                                     (ord.overpackFee !== undefined && ord.overpackFee > 0) ||
+                                     (ord.insuranceFee !== undefined && ord.insuranceFee > 0);
 
                       return (
                         <tr key={ord.id} className={`hover:bg-slate-50 transition-colors ${isPendingAdmin ? 'bg-amber-50/40' : ''}`}>
@@ -5091,9 +5223,9 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                           <td className="p-4 font-semibold text-slate-700">${subtotal.toFixed(2)}</td>
                           <td className="p-4 text-[11px] text-slate-600 whitespace-nowrap">
                             {hasFees ? (
-                              <div>
-                                <div>Ship: <span className="font-bold text-slate-800">${(ord.shippingFee || 0).toFixed(2)}</span></div>
-                                <div>Tax: <span className="font-bold text-slate-800">${(ord.salesTax || 0).toFixed(2)}</span> &bull; Svc: <span className="font-bold text-slate-800">${(ord.serviceTax || 0).toFixed(2)}</span></div>
+                              <div className="space-y-0.5">
+                                <div>Ship: <span className="font-bold text-slate-800">${(ord.shippingFee || 0).toFixed(2)}</span> &bull; Tax: <span className="font-bold text-slate-800">${(ord.salesTax || 0).toFixed(2)}</span></div>
+                                <div>Svc: <span className="font-bold text-slate-800">${(ord.serviceTax || 0).toFixed(2)}</span>{((ord.overpackFee || 0) > 0 || (ord.insuranceFee || 0) > 0) ? ` • Pack: $${(ord.overpackFee || 0).toFixed(2)} • Ins: $${(ord.insuranceFee || 0).toFixed(2)}` : ''}</div>
                               </div>
                             ) : (
                               <span className="text-amber-600 font-medium italic">Pending Fee Setup</span>
@@ -5550,13 +5682,13 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   <div className="flex items-center gap-2">
                     <SlidersHorizontal className="w-4 h-4 text-blue-600" />
                     <h4 className="text-xs font-bold text-blue-950 uppercase tracking-wider">
-                      Admin Editable Fees & Taxes (All 3 Required)
+                      Admin Editable Fees & Taxes (All 5 Required)
                     </h4>
                   </div>
                   <span className="text-[11px] text-blue-700 font-medium">Editable by Admin</span>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   {/* 1. Shipping Fee */}
                   <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-blue-100 shadow-2xs">
                     <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
@@ -5698,12 +5830,110 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                       </button>
                     </div>
                   </div>
+
+                  {/* 4. Overpack */}
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-blue-100 shadow-2xs">
+                    <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Box className="w-3.5 h-3.5 text-blue-600" />
+                        <span>4. Overpack</span>
+                      </span>
+                      <span className="text-[10px] text-red-500 font-semibold">*Required</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={adminOverpackFee}
+                        onChange={(e) => setAdminOverpackFee(e.target.value)}
+                        placeholder="0.00"
+                        className={`w-full pl-7 pr-3 py-2 bg-slate-50 border rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:bg-white ${
+                          isOverpackValid ? 'border-slate-300 focus:ring-blue-500' : 'border-red-400 bg-red-50/40'
+                        }`}
+                      />
+                    </div>
+                    {/* Presets */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setAdminOverpackFee('0.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        Free ($0)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdminOverpackFee('5.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        Standard ($5)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdminOverpackFee('15.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        Heavy ($15)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 5. Insurance */}
+                  <div className="space-y-1.5 bg-white p-3.5 rounded-xl border border-blue-100 shadow-2xs">
+                    <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />
+                        <span>5. Insurance</span>
+                      </span>
+                      <span className="text-[10px] text-red-500 font-semibold">*Required</span>
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={adminInsuranceFee}
+                        onChange={(e) => setAdminInsuranceFee(e.target.value)}
+                        placeholder="0.00"
+                        className={`w-full pl-7 pr-3 py-2 bg-slate-50 border rounded-lg text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:bg-white ${
+                          isInsuranceValid ? 'border-slate-300 focus:ring-blue-500' : 'border-red-400 bg-red-50/40'
+                        }`}
+                      />
+                    </div>
+                    {/* Presets */}
+                    <div className="flex flex-wrap gap-1 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setAdminInsuranceFee('0.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        None ($0)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdminInsuranceFee('5.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        Basic ($5)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAdminInsuranceFee('15.00')}
+                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-blue-100 text-slate-700 hover:text-blue-800 rounded text-[10px] font-semibold transition-colors"
+                      >
+                        Full ($15)
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Live Grand Total Calculation Summary */}
                 <div className="bg-white p-4 rounded-xl border border-blue-200 flex flex-col sm:flex-row items-center justify-between gap-3">
                   <div className="text-xs text-slate-600 space-y-0.5">
-                    <div>Base Items: <span className="font-semibold text-slate-800 font-mono">${currentOrderSubtotal.toFixed(2)}</span> + Shipping: <span className="font-semibold text-slate-800 font-mono">${(parsedShipping || 0).toFixed(2)}</span> + Sales Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedSalesTax || 0).toFixed(2)}</span> + Service Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedServiceTax || 0).toFixed(2)}</span></div>
+                    <div>Base Items: <span className="font-semibold text-slate-800 font-mono">${currentOrderSubtotal.toFixed(2)}</span> + Shipping: <span className="font-semibold text-slate-800 font-mono">${(parsedShipping || 0).toFixed(2)}</span> + Sales Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedSalesTax || 0).toFixed(2)}</span> + Service Tax: <span className="font-semibold text-slate-800 font-mono">${(parsedServiceTax || 0).toFixed(2)}</span> + Overpack: <span className="font-semibold text-slate-800 font-mono">${(parsedOverpack || 0).toFixed(2)}</span> + Insurance: <span className="font-semibold text-slate-800 font-mono">${(parsedInsurance || 0).toFixed(2)}</span></div>
                     <div className="text-[11px] text-slate-500">Grand Total that will be billed to the member's credit allocation line upon approval</div>
                   </div>
                   <div className="text-right shrink-0">
@@ -5798,11 +6028,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 })()}
               </div>
 
-              {/* Requirement Alert if not all 3 are filled */}
-              {!areAllThreeFeesFilled && (
+              {/* Requirement Alert if not all 5 are filled */}
+              {!areAllFeesFilled && (
                 <div className="p-3.5 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl text-xs font-semibold flex items-center gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>Please fill all three fields (Shipping Fee, Sales Tax, and Service Tax) to enable the approval and decline action options.</span>
+                  <span>Please fill all five fee fields (Shipping Fee, Sales Tax, Service Tax, Overpack, and Insurance) to enable order approval and decline actions.</span>
                 </div>
               )}
 
@@ -5881,14 +6111,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   {/* Option 1: Decline Order Fulfillment */}
                   <button
                     type="button"
-                    disabled={!areAllThreeFeesFilled}
+                    disabled={!areAllFeesFilled}
                     onClick={() => setShowDeclineConfirm(true)}
                     className={`w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                      areAllThreeFeesFilled
+                      areAllFeesFilled
                         ? 'bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 hover:border-rose-400 cursor-pointer shadow-2xs'
                         : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                     }`}
-                    title={areAllThreeFeesFilled ? 'Decline fulfillment (e.g. previous balance)' : 'Fill all three fees first'}
+                    title={areAllFeesFilled ? 'Decline fulfillment (e.g. previous balance)' : 'Fill all 5 fees first'}
                   >
                     <XCircle className="w-4 h-4 text-rose-600" />
                     <span>1. Decline Order Fulfillment</span>
@@ -5897,19 +6127,19 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   {/* Option 2: Approve Order Fulfillment directly */}
                   <button
                     type="button"
-                    disabled={!areAllThreeFeesFilled || !adminReviewingOrder.items || adminReviewingOrder.items.length === 0}
+                    disabled={!areAllFeesFilled || !adminReviewingOrder.items || adminReviewingOrder.items.length === 0}
                     onClick={handleApproveOrderFulfillment}
                     id="admin-approve-order-btn"
                     className={`w-full sm:w-auto px-5 py-2.5 rounded-xl text-xs font-bold text-white transition-all flex items-center justify-center gap-2 shadow-xs ${
-                      areAllThreeFeesFilled && adminReviewingOrder.items && adminReviewingOrder.items.length > 0
+                      areAllFeesFilled && adminReviewingOrder.items && adminReviewingOrder.items.length > 0
                         ? isItemsModifiedByAdmin
                           ? 'bg-amber-600 hover:bg-amber-700 cursor-pointer shadow-sm hover:shadow active:scale-[0.99]'
                           : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-sm hover:shadow active:scale-[0.99]'
                         : 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     }`}
                     title={
-                      !areAllThreeFeesFilled
-                        ? 'Fill all three fees first'
+                      !areAllFeesFilled
+                        ? 'Fill all 5 fees first'
                         : !adminReviewingOrder.items || adminReviewingOrder.items.length === 0
                         ? 'Keep at least 1 item to approve order'
                         : isItemsModifiedByAdmin

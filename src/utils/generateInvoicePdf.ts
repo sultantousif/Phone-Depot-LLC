@@ -243,68 +243,102 @@ export function generateInvoicePdf({
   // Calculate final Y after table
   const finalY = (doc as any).lastAutoTable?.finalY || currentY + 120;
 
-  // Breakdown calculation (subtotal, shipping, taxes, total)
+  // Breakdown calculation (subtotal, shipping, taxes, overpack, insurance, total)
   const subtotal = order ? (order.subtotal || order.total) : invoice.amount;
   const shippingFee = order?.shippingFee ?? 0;
   const salesTax = order?.salesTax ?? 0;
   const serviceTax = order?.serviceTax ?? 0;
+  const overpackFee = order?.overpackFee ?? 0;
+  const insuranceFee = order?.insuranceFee ?? 0;
   const grandTotal = invoice.amount;
 
   const summaryWidth = 220;
   const summaryX = pageWidth - margin - summaryWidth;
   let summaryY = finalY + 12;
 
+  // Calculate box height dynamically based on optional fee rows
+  const extraRowsCount = (overpackFee > 0 ? 1 : 0) + (insuranceFee > 0 ? 1 : 0);
+  const summaryBoxHeight = 85 + extraRowsCount * 11;
+
   // Summary Table box
   doc.setFillColor(255, 255, 255);
   doc.setDrawColor(226, 232, 240);
   doc.setLineWidth(1);
-  doc.roundedRect(summaryX, summaryY, summaryWidth, 85, 4, 4, 'FD');
+  doc.roundedRect(summaryX, summaryY, summaryWidth, summaryBoxHeight, 4, 4, 'FD');
 
+  let currentLineY = summaryY + 16;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
 
   // Subtotal
-  doc.text('Subtotal:', summaryX + 12, summaryY + 16);
+  doc.text('Subtotal:', summaryX + 12, currentLineY);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`$${subtotal.toFixed(2)}`, summaryX + summaryWidth - 12, summaryY + 16, { align: 'right' });
+  doc.text(`$${subtotal.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
 
   // Shipping Fee
+  currentLineY += 12;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139);
-  doc.text('Shipping & Handling:', summaryX + 12, summaryY + 28);
+  doc.text('Shipping & Handling:', summaryX + 12, currentLineY);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`$${shippingFee.toFixed(2)}`, summaryX + summaryWidth - 12, summaryY + 28, { align: 'right' });
+  doc.text(`$${shippingFee.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
 
   // Sales Tax & Service Tax
+  currentLineY += 12;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139);
-  doc.text('Sales Tax (State/Local):', summaryX + 12, summaryY + 40);
+  doc.text('Sales Tax (State/Local):', summaryX + 12, currentLineY);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`$${salesTax.toFixed(2)}`, summaryX + summaryWidth - 12, summaryY + 40, { align: 'right' });
+  doc.text(`$${salesTax.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
 
+  currentLineY += 12;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139);
-  doc.text('Service & Handling Tax:', summaryX + 12, summaryY + 52);
+  doc.text('Service & Handling Tax:', summaryX + 12, currentLineY);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(`$${serviceTax.toFixed(2)}`, summaryX + summaryWidth - 12, summaryY + 52, { align: 'right' });
+  doc.text(`$${serviceTax.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+
+  // Overpack Fee (if present)
+  if (overpackFee > 0) {
+    currentLineY += 12;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text('Secure Overpack Fee:', summaryX + 12, currentLineY);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(`$${overpackFee.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+  }
+
+  // Insurance Fee (if present)
+  if (insuranceFee > 0) {
+    currentLineY += 12;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text('Transit & Cargo Insurance:', summaryX + 12, currentLineY);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text(`$${insuranceFee.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+  }
 
   // Divider
+  currentLineY += 7;
   doc.setDrawColor(203, 213, 225);
-  doc.line(summaryX + 10, summaryY + 58, summaryX + summaryWidth - 10, summaryY + 58);
+  doc.line(summaryX + 10, currentLineY, summaryX + summaryWidth - 10, currentLineY);
 
   // Grand Total
+  currentLineY += 14;
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text('Total Invoice Amount:', summaryX + 12, summaryY + 74);
+  doc.text('Total Invoice Amount:', summaryX + 12, currentLineY);
   doc.setFontSize(11);
   doc.setTextColor(16, 185, 129);
-  doc.text(`$${grandTotal.toFixed(2)}`, summaryX + summaryWidth - 12, summaryY + 74, { align: 'right' });
+  doc.text(`$${grandTotal.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
 
   // Left Note / Policy info
   const noteX = margin;
@@ -312,7 +346,7 @@ export function generateInvoicePdf({
   const noteWidth = summaryX - margin - 15;
 
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(noteX, noteY, noteWidth, 85, 4, 4, 'F');
+  doc.roundedRect(noteX, noteY, noteWidth, summaryBoxHeight, 4, 4, 'F');
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
@@ -436,7 +470,7 @@ export function generatePaymentInvoicePdf({
 
   // Decorative Accent line - color based on payment method
   let accentR = 16, accentG = 185, accentB = 129; // emerald-500 default
-  if (payment.method === 'Paid with CM') {
+  if (payment.method === 'Paid with Credit Memo' || payment.method === 'Paid with Cash Memo' || payment.method === 'Paid with CM') {
     accentR = 37; accentG = 99; accentB = 235; // blue-600
   } else if (payment.method === 'Paid with Check') {
     accentR = 147; accentG = 51; accentB = 234; // purple-600
@@ -597,8 +631,8 @@ export function generatePaymentInvoicePdf({
   doc.setTextColor(71, 85, 105);
 
   let methodDesc = '';
-  if (payment.method === 'Paid with CM') {
-    methodDesc = 'Commercial credit memo / merchandise credit allowance applied towards invoice settlement.';
+  if (payment.method === 'Paid with Credit Memo' || payment.method === 'Paid with Cash Memo' || payment.method === 'Paid with CM') {
+    methodDesc = 'Commercial credit memo / merchandise allowance applied towards invoice settlement.';
   } else if (payment.method === 'Paid with Cash') {
     methodDesc = 'Direct cash remittance received, counted, and deposited against wholesale invoice balance.';
   } else if (payment.method === 'Paid with Check') {
