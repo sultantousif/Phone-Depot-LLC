@@ -86,6 +86,17 @@ import {
   getMemberCreditSummary,
   getMemberPaymentCycleInfo
 } from '../utils/creditUtils';
+import {
+  subscribeToOrders,
+  subscribeToInvoices,
+  subscribeToPayments,
+  subscribeToMembers,
+  saveOrderToFirestore,
+  saveInvoiceToFirestore,
+  savePaymentToFirestore,
+  saveMemberToFirestore,
+  deleteMemberFromFirestore
+} from '../firebase/firestoreService';
 import { PaymentMethodOption } from '../types';
 
 const US_STATES = [
@@ -483,11 +494,33 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     window.addEventListener('distro_storage_updated', handleStorageChange);
     window.addEventListener('distro_payments_invoices_reset', handleStorageChange);
     const interval = setInterval(handleStorageChange, 2000);
+    // Subscribe to Firestore for real-time live database updates across all sessions
+    const unsubOrders = subscribeToOrders((newOrders) => {
+      setOrders(newOrders);
+      localStorage.setItem('distro_orders', JSON.stringify(newOrders));
+    });
+    const unsubInvoices = subscribeToInvoices((newInvs) => {
+      setInvoices(newInvs);
+      localStorage.setItem('distro_invoices', JSON.stringify(newInvs));
+    });
+    const unsubPayments = subscribeToPayments((newPmts) => {
+      setPayments(newPmts);
+      localStorage.setItem('distro_payments', JSON.stringify(newPmts));
+    });
+    const unsubMembers = subscribeToMembers((newMems) => {
+      setMembers(newMems);
+      localStorage.setItem('distro_team_members', JSON.stringify(newMems));
+    });
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('distro_storage_updated', handleStorageChange);
       window.removeEventListener('distro_payments_invoices_reset', handleStorageChange);
       clearInterval(interval);
+      unsubOrders();
+      unsubInvoices();
+      unsubPayments();
+      unsubMembers();
     };
   }, []);
 

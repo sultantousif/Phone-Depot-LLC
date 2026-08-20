@@ -1,0 +1,151 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A catalog product item in inventory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "sku": { "type": "string" },
+        "price": { "type": "number" },
+        "stock": { "type": "number" },
+        "description": { "type": "string" },
+        "image": { "type": "string" },
+        "visibilityMode": { "type": "string" },
+        "showStockToMembers": { "type": "boolean" },
+        "isFeatured": { "type": "boolean" }
+      },
+      "required": ["id", "name", "category", "sku", "price", "stock"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A wholesale purchase order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "date": { "type": "string" },
+        "status": { "type": "string" },
+        "customerName": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberUsername": { "type": "string" },
+        "destinationAddress": { "type": "string" },
+        "businessAddress": { "type": "string" },
+        "itemsCount": { "type": "number" },
+        "subtotal": { "type": "number" },
+        "shippingFee": { "type": "number" },
+        "salesTax": { "type": "number" },
+        "serviceTax": { "type": "number" },
+        "overpackFee": { "type": "number" },
+        "insuranceFee": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentStatus": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "orderNumber", "date", "status", "customerName", "itemsCount", "subtotal", "total", "paymentStatus"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "A billing invoice for orders and fees",
+      "type": "object",
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "title": { "type": "string" },
+        "memberId": { "type": "string" },
+        "memberUsername": { "type": "string" },
+        "customerName": { "type": "string" },
+        "billedTo": { "type": "string" },
+        "date": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "amount": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "status": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["invoiceNumber", "orderNumber", "date", "dueDate", "amount", "status"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A payment transaction record",
+      "type": "object",
+      "properties": {
+        "paymentId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "memberUsername": { "type": "string" },
+        "customerName": { "type": "string" },
+        "date": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "status": { "type": "string" },
+        "referenceNumber": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["paymentId", "invoiceNumber", "date", "amount", "method", "status"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A team member and store representative",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "username": { "type": "string" },
+        "tempUsername": { "type": "string" },
+        "role": { "type": "string" },
+        "storeLocation": { "type": "string" },
+        "businessAddress": { "type": "string" },
+        "phone": { "type": "string" },
+        "status": { "type": "string" },
+        "dateAdded": { "type": "string" },
+        "creditAllocation": { "type": "number" },
+        "paymentCycleDays": { "type": "number" }
+      },
+      "required": ["id", "name", "email", "username", "role", "status", "creditAllocation"]
+    },
+    "ShopSetting": {
+      "title": "ShopSetting",
+      "description": "Global store and distribution configuration",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "masterCreditLimit": { "type": "number" },
+        "defaultTaxRate": { "type": "number" },
+        "storeName": { "type": "string" },
+        "announcement": { "type": "string" }
+      },
+      "required": ["id"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Inventory product catalog items"
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Wholesale purchase orders"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Billing invoice documents"
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Payment records and settlements"
+    },
+    "/members/{memberId}": {
+      "schema": { "$ref": "#/entities/Member" },
+      "description": "Team member profiles and permissions"
+    },
+    "/shopSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/ShopSetting" },
+      "description": "Global shop parameters and credit caps"
+    }
+  }
+}

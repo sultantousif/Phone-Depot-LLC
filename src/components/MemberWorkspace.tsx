@@ -60,6 +60,16 @@ import {
   getMemberCreditSummary,
   getMemberPaymentCycleInfo 
 } from '../utils/creditUtils';
+import {
+  subscribeToOrders,
+  subscribeToInvoices,
+  subscribeToPayments,
+  subscribeToMembers,
+  subscribeToProducts,
+  saveOrderToFirestore,
+  saveInvoiceToFirestore,
+  savePaymentToFirestore
+} from '../firebase/firestoreService';
 
 interface MemberWorkspaceProps {
   user: User;
@@ -185,23 +195,58 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     window.addEventListener('distro_payments_invoices_reset', handleStorageChange);
     // Also poll gently every 2s for same-window updates
     const interval = setInterval(handleStorageChange, 2000);
+    // Subscribe to Firestore for real-time live database updates
+    const unsubOrders = subscribeToOrders((newOrders) => {
+      setOrders(newOrders);
+      localStorage.setItem('distro_orders', JSON.stringify(newOrders));
+    });
+    const unsubInvoices = subscribeToInvoices((newInvs) => {
+      setInvoices(newInvs);
+      localStorage.setItem('distro_invoices', JSON.stringify(newInvs));
+    });
+    const unsubPayments = subscribeToPayments((newPmts) => {
+      setPayments(newPmts);
+      localStorage.setItem('distro_payments', JSON.stringify(newPmts));
+    });
+    const unsubMembers = subscribeToMembers((newMems) => {
+      setMembers(newMems);
+      localStorage.setItem('distro_team_members', JSON.stringify(newMems));
+    });
+    const unsubProducts = subscribeToProducts((newProds) => {
+      setProducts(newProds);
+      localStorage.setItem('distro_products', JSON.stringify(newProds));
+    });
+
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('distro_storage_updated', handleStorageChange);
       window.removeEventListener('distro_payments_invoices_reset', handleStorageChange);
       clearInterval(interval);
+      unsubOrders();
+      unsubInvoices();
+      unsubPayments();
+      unsubMembers();
+      unsubProducts();
     };
   }, []);
 
-  // Save changes to localStorage
+  // Save changes to localStorage and Firestore
   const saveOrders = (updatedOrders: OrderItem[]) => {
     setOrders(updatedOrders);
     localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
+    // Sync latest orders to Firestore
+    updatedOrders.forEach((ord) => {
+      saveOrderToFirestore(ord).catch(console.error);
+    });
   };
 
   const saveInvoices = (updatedInvoices: InvoiceItem[]) => {
     setInvoices(updatedInvoices);
     localStorage.setItem('distro_invoices', JSON.stringify(updatedInvoices));
+    // Sync latest invoices to Firestore
+    updatedInvoices.forEach((inv) => {
+      saveInvoiceToFirestore(inv).catch(console.error);
+    });
   };
 
   // Filter orders for this member

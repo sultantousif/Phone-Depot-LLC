@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, AdminView } from './types';
 import { LandingPage } from './components/LandingPage';
 import { LoginModal } from './components/LoginModal';
 import { HeaderNav } from './components/HeaderNav';
 import { AdminWorkspace } from './components/AdminWorkspace';
 import { MemberWorkspace } from './components/MemberWorkspace';
+import { auth, signOut } from './firebase/config';
+import { onAuthStateChanged } from 'firebase/auth';
+import { initializeFirestoreData } from './firebase/firestoreService';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginModalRole, setLoginModalRole] = useState<'admin' | 'member' | null>(null);
   const [activeAdminView, setActiveAdminView] = useState<AdminView>('home');
+
+  // Initialize Firestore collections on app launch
+  useEffect(() => {
+    initializeFirestoreData();
+  }, []);
 
   const handleOpenLoginModal = (role: 'admin' | 'member') => {
     setLoginModalRole(role);
@@ -49,7 +57,12 @@ export default function App() {
     setActiveAdminView('home');
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch {
+      // ignore
+    }
     setCurrentUser(null);
     setActiveAdminView('home');
   };

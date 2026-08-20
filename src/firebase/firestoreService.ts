@@ -1,0 +1,267 @@
+import {
+  collection,
+  doc,
+  getDocs,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  writeBatch
+} from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType } from './config';
+import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember } from '../types';
+import { 
+  SAMPLE_PRODUCTS, 
+  SAMPLE_ORDERS, 
+  SAMPLE_INVOICES, 
+  SAMPLE_PAYMENTS, 
+  INITIAL_MEMBERS 
+} from '../data/sampleData';
+
+// Collection references
+const PRODUCTS_COL = 'products';
+const ORDERS_COL = 'orders';
+const INVOICES_COL = 'invoices';
+const PAYMENTS_COL = 'payments';
+const MEMBERS_COL = 'members';
+const SETTINGS_COL = 'shopSettings';
+
+// Initialize and seed Firestore if empty
+export async function initializeFirestoreData() {
+  try {
+    const productsSnap = await getDocs(collection(db, PRODUCTS_COL));
+    if (productsSnap.empty) {
+      console.log('Seeding initial Firestore products...');
+      const batch = writeBatch(db);
+      SAMPLE_PRODUCTS.forEach((prod) => {
+        const ref = doc(db, PRODUCTS_COL, prod.id);
+        batch.set(ref, prod);
+      });
+      await batch.commit();
+    }
+
+    const ordersSnap = await getDocs(collection(db, ORDERS_COL));
+    if (ordersSnap.empty && SAMPLE_ORDERS.length > 0) {
+      console.log('Seeding initial Firestore orders...');
+      const batch = writeBatch(db);
+      SAMPLE_ORDERS.forEach((order) => {
+        const ref = doc(db, ORDERS_COL, order.id);
+        batch.set(ref, order);
+      });
+      await batch.commit();
+    }
+
+    const invoicesSnap = await getDocs(collection(db, INVOICES_COL));
+    if (invoicesSnap.empty) {
+      console.log('Seeding initial Firestore invoices...');
+      const batch = writeBatch(db);
+      SAMPLE_INVOICES.forEach((inv) => {
+        const ref = doc(db, INVOICES_COL, inv.invoiceNumber);
+        batch.set(ref, inv);
+      });
+      await batch.commit();
+    }
+
+    const paymentsSnap = await getDocs(collection(db, PAYMENTS_COL));
+    if (paymentsSnap.empty) {
+      console.log('Seeding initial Firestore payments...');
+      const batch = writeBatch(db);
+      SAMPLE_PAYMENTS.forEach((pmt) => {
+        const ref = doc(db, PAYMENTS_COL, pmt.paymentId);
+        batch.set(ref, pmt);
+      });
+      await batch.commit();
+    }
+
+    const membersSnap = await getDocs(collection(db, MEMBERS_COL));
+    if (membersSnap.empty) {
+      console.log('Seeding initial Firestore members...');
+      const batch = writeBatch(db);
+      INITIAL_MEMBERS.forEach((mem) => {
+        const ref = doc(db, MEMBERS_COL, mem.id);
+        batch.set(ref, mem);
+      });
+      await batch.commit();
+    }
+  } catch (error) {
+    console.error('Error during initial Firestore seeding:', error);
+    // Non-blocking, fallback gracefully
+  }
+}
+
+// ---------------- Realtime Listeners ----------------
+
+export function subscribeToProducts(callback: (products: ProductItem[]) => void) {
+  const colRef = collection(db, PRODUCTS_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const prods: ProductItem[] = [];
+      snapshot.forEach((docSnap) => {
+        prods.push({ id: docSnap.id, ...docSnap.data() } as ProductItem);
+      });
+      if (prods.length > 0) {
+        callback(prods);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, PRODUCTS_COL);
+    }
+  );
+}
+
+export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
+  const colRef = collection(db, ORDERS_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const ords: OrderItem[] = [];
+      snapshot.forEach((docSnap) => {
+        ords.push({ id: docSnap.id, ...docSnap.data() } as OrderItem);
+      });
+      if (ords.length > 0) {
+        callback(ords);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, ORDERS_COL);
+    }
+  );
+}
+
+export function subscribeToInvoices(callback: (invoices: InvoiceItem[]) => void) {
+  const colRef = collection(db, INVOICES_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const invs: InvoiceItem[] = [];
+      snapshot.forEach((docSnap) => {
+        invs.push({ ...docSnap.data() } as InvoiceItem);
+      });
+      if (invs.length > 0) {
+        callback(invs);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, INVOICES_COL);
+    }
+  );
+}
+
+export function subscribeToPayments(callback: (payments: PaymentItem[]) => void) {
+  const colRef = collection(db, PAYMENTS_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const pmts: PaymentItem[] = [];
+      snapshot.forEach((docSnap) => {
+        pmts.push({ ...docSnap.data() } as PaymentItem);
+      });
+      if (pmts.length > 0) {
+        callback(pmts);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, PAYMENTS_COL);
+    }
+  );
+}
+
+export function subscribeToMembers(callback: (members: TeamMember[]) => void) {
+  const colRef = collection(db, MEMBERS_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const mems: TeamMember[] = [];
+      snapshot.forEach((docSnap) => {
+        mems.push({ id: docSnap.id, ...docSnap.data() } as TeamMember);
+      });
+      if (mems.length > 0) {
+        callback(mems);
+      }
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, MEMBERS_COL);
+    }
+  );
+}
+
+// ---------------- Firestore Mutations ----------------
+
+// Products
+export async function saveProductToFirestore(product: ProductItem) {
+  try {
+    const ref = doc(db, PRODUCTS_COL, product.id);
+    await setDoc(ref, product, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${PRODUCTS_COL}/${product.id}`);
+  }
+}
+
+export async function deleteProductFromFirestore(productId: string) {
+  try {
+    const ref = doc(db, PRODUCTS_COL, productId);
+    await deleteDoc(ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${PRODUCTS_COL}/${productId}`);
+  }
+}
+
+// Orders
+export async function saveOrderToFirestore(order: OrderItem) {
+  try {
+    const ref = doc(db, ORDERS_COL, order.id);
+    await setDoc(ref, order, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${ORDERS_COL}/${order.id}`);
+  }
+}
+
+export async function updateOrderStatusInFirestore(orderId: string, updates: Partial<OrderItem>) {
+  try {
+    const ref = doc(db, ORDERS_COL, orderId);
+    await updateDoc(ref, updates);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `${ORDERS_COL}/${orderId}`);
+  }
+}
+
+// Invoices
+export async function saveInvoiceToFirestore(invoice: InvoiceItem) {
+  try {
+    const ref = doc(db, INVOICES_COL, invoice.invoiceNumber);
+    await setDoc(ref, invoice, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${INVOICES_COL}/${invoice.invoiceNumber}`);
+  }
+}
+
+// Payments
+export async function savePaymentToFirestore(payment: PaymentItem) {
+  try {
+    const ref = doc(db, PAYMENTS_COL, payment.paymentId);
+    await setDoc(ref, payment, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${PAYMENTS_COL}/${payment.paymentId}`);
+  }
+}
+
+// Members
+export async function saveMemberToFirestore(member: TeamMember) {
+  try {
+    const ref = doc(db, MEMBERS_COL, member.id);
+    await setDoc(ref, member, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${MEMBERS_COL}/${member.id}`);
+  }
+}
+
+export async function deleteMemberFromFirestore(memberId: string) {
+  try {
+    const ref = doc(db, MEMBERS_COL, memberId);
+    await deleteDoc(ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${MEMBERS_COL}/${memberId}`);
+  }
+}
