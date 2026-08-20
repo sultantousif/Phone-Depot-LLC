@@ -71,7 +71,9 @@ import {
   XCircle,
   ChevronDown,
   ChevronUp,
-  Sparkles
+  Sparkles,
+  TrendingDown,
+  Award
 } from 'lucide-react';
 import { 
   downloadInvoicePdf, 
@@ -239,7 +241,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   // Create Invoice Modal & Form State
   const [isCreateInvoiceOpen, setIsCreateInvoiceOpen] = useState(false);
   const [invoiceBilledToMemberId, setInvoiceBilledToMemberId] = useState('');
-  const [invoiceTitle, setInvoiceTitle] = useState<'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Miscellenous'>('Late Payment');
+  const [invoiceTitle, setInvoiceTitle] = useState<'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Low Performance Penalty' | 'Good Performance Bonus' | 'Miscellenous'>('Late Payment');
   const [invoiceNumberInput, setInvoiceNumberInput] = useState('');
   const [invoiceOrderRefInput, setInvoiceOrderRefInput] = useState('');
   const [invoiceAmountInput, setInvoiceAmountInput] = useState('150.00');
@@ -1190,18 +1192,20 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     const prefix = 
       title === 'Late Payment' ? 'REF-LP' :
       title === 'Chargeback' ? 'REF-CB' :
-      title === 'Check Bounce' ? 'REF-CHK' : 'REF-MISC';
+      title === 'Check Bounce' ? 'REF-CHK' :
+      title === 'Low Performance Penalty' ? 'REF-LPP' :
+      title === 'Good Performance Bonus' ? 'REF-GPB' : 'REF-MISC';
     return `${prefix}-${Math.floor(1000 + Math.random() * 9000)}`;
   };
 
-  const handleOpenCreateInvoice = (preselectedMemberId?: string, preselectedTitle?: 'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Miscellenous') => {
+  const handleOpenCreateInvoice = (preselectedMemberId?: string, preselectedTitle?: 'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Low Performance Penalty' | 'Good Performance Bonus' | 'Miscellenous') => {
     const defaultMember = preselectedMemberId || (members.length > 0 ? members[0].id : '');
     const title = preselectedTitle || 'Late Payment';
     setInvoiceBilledToMemberId(defaultMember);
     setInvoiceTitle(title);
     setInvoiceNumberInput(generateRandomInvoiceNumber());
     setInvoiceOrderRefInput(generateRandomRefNumber(title));
-    setInvoiceAmountInput('150.00');
+    setInvoiceAmountInput(title === 'Good Performance Bonus' ? '-50.00' : '150.00');
     const today = new Date().toISOString().split('T')[0];
     const due = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     setInvoiceDateInput(today);
@@ -1213,7 +1217,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setIsCreateInvoiceOpen(true);
   };
 
-  const handleInvoiceTitleChange = (newTitle: 'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Miscellenous') => {
+  const handleInvoiceTitleChange = (newTitle: 'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Low Performance Penalty' | 'Good Performance Bonus' | 'Miscellenous') => {
     setInvoiceTitle(newTitle);
     if (!invoiceOrderRefInput || invoiceOrderRefInput.startsWith('REF-')) {
       setInvoiceOrderRefInput(generateRandomRefNumber(newTitle));
@@ -1236,8 +1240,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }
 
     const numAmount = parseFloat(invoiceAmountInput);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      setInvoiceFormError('Please enter a valid invoice amount greater than $0.00.');
+    if (isNaN(numAmount) || Math.abs(numAmount) < 0.001) {
+      setInvoiceFormError('Please enter a valid non-zero invoice amount (positive for charges/fees, negative for credit memos/refunds).');
       return;
     }
 
@@ -1248,6 +1252,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
     const finalOrderNumber = invoiceOrderRefInput.trim() || generateRandomRefNumber(invoiceTitle);
     const memberDisplayName = `${selectedMember.name}${selectedMember.storeLocation ? ` (${selectedMember.storeLocation})` : ''}`;
+    const isNegative = numAmount < 0;
 
     const newInvoiceItem: InvoiceItem = {
       invoiceNumber: invoiceNumberInput.trim(),
@@ -1260,6 +1265,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       date: invoiceDateInput || new Date().toISOString().split('T')[0],
       dueDate: invoiceDueDateInput || new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       amount: numAmount,
+      paidAmount: invoiceStatusInput === 'Paid' ? numAmount : 0,
+      balanceDue: invoiceStatusInput === 'Paid' ? 0 : numAmount,
       status: invoiceStatusInput,
       method: invoicePaymentMethodInput,
       notes: invoiceNotesInput.trim() || undefined,
@@ -1273,15 +1280,17 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
         customerName: selectedMember.name,
         date: invoiceDateInput || new Date().toISOString().split('T')[0],
         amount: numAmount,
-        method: (invoicePaymentMethodInput as any) || 'ACH / Wire',
+        method: (invoicePaymentMethodInput as any) || (isNegative ? 'Company Credit Line' : 'ACH / Wire'),
         status: 'Completed',
+        notes: isNegative ? 'Credit Memo Settled / Applied' : undefined,
       };
       setPayments((prev) => [newPayment, ...prev]);
     }
 
     setInvoices((prev) => [newInvoiceItem, ...prev]);
     setIsCreateInvoiceOpen(false);
-    setInvoiceSuccessMsg(`Invoice #${newInvoiceItem.invoiceNumber} (${invoiceTitle} • $${numAmount.toFixed(2)}) has been successfully issued to ${selectedMember.name}!`);
+    const formattedAmt = isNegative ? `-$${Math.abs(numAmount).toFixed(2)} (Credit Memo)` : `$${numAmount.toFixed(2)}`;
+    setInvoiceSuccessMsg(`Invoice #${newInvoiceItem.invoiceNumber} (${invoiceTitle} • ${formattedAmt}) has been successfully issued to ${selectedMember.name}!`);
     setTimeout(() => setInvoiceSuccessMsg(''), 8000);
   };
 
@@ -1306,6 +1315,20 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
           <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-300 inline-flex items-center gap-1">
             <XCircle className="w-3 h-3 text-purple-600 shrink-0" />
             <span>Check Bounce</span>
+          </span>
+        );
+      case 'Low Performance Penalty':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-orange-50 text-orange-800 border border-orange-300 inline-flex items-center gap-1">
+            <TrendingDown className="w-3 h-3 text-orange-600 shrink-0" />
+            <span>Low Performance Penalty</span>
+          </span>
+        );
+      case 'Good Performance Bonus':
+        return (
+          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-300 inline-flex items-center gap-1">
+            <Award className="w-3 h-3 text-emerald-600 shrink-0" />
+            <span>Good Performance Bonus</span>
           </span>
         );
       case 'Miscellenous':
@@ -3734,6 +3757,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   { label: 'Late Payment', count: invoices.filter(i => i.title === 'Late Payment').length },
                   { label: 'Chargeback', count: invoices.filter(i => i.title === 'Chargeback').length },
                   { label: 'Check Bounce', count: invoices.filter(i => i.title === 'Check Bounce').length },
+                  { label: 'Low Performance Penalty', count: invoices.filter(i => i.title === 'Low Performance Penalty').length },
+                  { label: 'Good Performance Bonus', count: invoices.filter(i => i.title === 'Good Performance Bonus').length },
                   { label: 'Miscellenous', count: invoices.filter(i => i.title === 'Miscellenous').length },
                   { label: 'Order Billing', count: invoices.filter(i => !i.title).length },
                 ].map((tab) => (
@@ -3936,13 +3961,29 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                             <td className="p-4 text-slate-500">{inv.dueDate}</td>
 
                             {/* Total Amount */}
-                            <td className="p-4 font-bold text-slate-900 font-mono text-xs">
-                              ${inv.amount.toFixed(2)}
+                            <td className="p-4 font-bold font-mono text-xs">
+                              {inv.amount < 0 ? (
+                                <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                                  <span>-${Math.abs(inv.amount).toFixed(2)}</span>
+                                  <span className="text-[9px] font-sans font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">Credit</span>
+                                </span>
+                              ) : (
+                                <span className="text-slate-900">${inv.amount.toFixed(2)}</span>
+                              )}
                             </td>
 
                             {/* Current Balance Due (Key Highlighted Metric) */}
                             <td className="p-4">
-                              {paymentSummary.currentBalanceDue > 0 ? (
+                              {paymentSummary.currentBalanceDue < -0.001 ? (
+                                <div className="space-y-0.5">
+                                  <span className="text-emerald-700 font-extrabold font-mono text-xs block">
+                                    -${Math.abs(paymentSummary.currentBalanceDue).toFixed(2)} Credit
+                                  </span>
+                                  <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                    Credit Balance
+                                  </span>
+                                </div>
+                              ) : paymentSummary.currentBalanceDue > 0.001 ? (
                                 <div className="space-y-0.5">
                                   <span className="text-rose-700 font-extrabold font-mono text-xs block">
                                     ${paymentSummary.currentBalanceDue.toFixed(2)} Due
@@ -4770,11 +4811,29 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                           <td className="p-3 font-mono text-slate-600 text-[11px]">{inv.orderNumber}</td>
                           <td className="p-3 text-slate-600">{inv.date}</td>
                           <td className="p-3 text-slate-500">{inv.dueDate}</td>
-                          <td className="p-3 font-bold font-mono text-slate-900">${inv.amount.toFixed(2)}</td>
+                          <td className="p-3 font-bold font-mono text-xs">
+                            {inv.amount < 0 ? (
+                              <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                                <span>-${Math.abs(inv.amount).toFixed(2)}</span>
+                                <span className="text-[9px] font-sans font-bold px-1 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">Credit</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-900">${inv.amount.toFixed(2)}</span>
+                            )}
+                          </td>
                           
                           {/* Current Balance Due */}
                           <td className="p-3">
-                            {paymentSummary.currentBalanceDue > 0 ? (
+                            {paymentSummary.currentBalanceDue < -0.001 ? (
+                              <div className="space-y-0.5">
+                                <span className="text-emerald-700 font-extrabold font-mono text-xs block">
+                                  -${Math.abs(paymentSummary.currentBalanceDue).toFixed(2)} Credit
+                                </span>
+                                <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                  Credit Balance
+                                </span>
+                              </div>
+                            ) : paymentSummary.currentBalanceDue > 0.001 ? (
                               <div className="space-y-0.5">
                                 <span className="text-rose-700 font-extrabold font-mono text-xs block">
                                   ${paymentSummary.currentBalanceDue.toFixed(2)} Due
@@ -6964,30 +7023,30 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       {isCreateInvoiceOpen && (
         <div 
           id="create-invoice-modal-backdrop"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-in fade-in duration-200"
         >
           <div 
             id="create-invoice-modal"
-            className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 p-6 md:p-8 my-8 overflow-hidden animate-in zoom-in-95 duration-150"
+            className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden animate-in zoom-in-95 duration-150"
           >
             {/* Top Accent bar */}
-            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500" />
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-blue-500 z-10" />
 
             {/* Modal Header */}
-            <div className="flex items-start justify-between pb-4 border-b border-slate-100 mb-5">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-white shrink-0">
               <div className="flex items-center space-x-3">
-                <div className="p-3 bg-blue-50 text-blue-600 rounded-xl border border-blue-100 shadow-2xs">
-                  <Receipt className="w-6 h-6" />
+                <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100 shadow-2xs">
+                  <Receipt className="w-5 h-5" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold text-slate-900 tracking-tight">Create an Invoice</h3>
+                    <h3 className="text-base font-bold text-slate-900 tracking-tight">Create an Invoice</h3>
                     <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-blue-100 text-blue-700 uppercase tracking-wide">
                       Admin Billing
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Issue an adjustment invoice, fee assessment or penalty charge to a member account
+                    Issue an adjustment invoice, fee assessment, or credit memo
                   </p>
                 </div>
               </div>
@@ -7003,341 +7062,427 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               </button>
             </div>
 
-            {/* Error Notification Alert */}
-            {invoiceFormError && (
-              <div className="mb-5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs text-rose-800 font-semibold animate-in fade-in duration-150">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
-                <span>{invoiceFormError}</span>
-              </div>
-            )}
-
-            {/* Invoice Form */}
-            <form onSubmit={handleCreateInvoiceSubmit} className="space-y-4">
+            {/* Invoice Form (with scrollable body & pinned footer) */}
+            <form onSubmit={handleCreateInvoiceSubmit} className="flex flex-col flex-1 overflow-hidden">
               
-              {/* Field 1: Billed to (Select member) Dropdown */}
-              <div className="space-y-1.5">
-                <label htmlFor="select-billed-to-member" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Billed To (Select Member) <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <select
-                    id="select-billed-to-member"
-                    value={invoiceBilledToMemberId}
-                    onChange={(e) => setInvoiceBilledToMemberId(e.target.value)}
-                    className="w-full pl-3.5 pr-9 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all appearance-none cursor-pointer"
-                    required
-                  >
-                    <option value="">-- Select Member / Store Account --</option>
-                    {members.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} {m.storeLocation ? `— ${m.storeLocation}` : `(${m.role})`} • @{m.username}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+              {/* Scrollable Form Body */}
+              <div className="overflow-y-auto px-6 py-4 space-y-4 flex-1">
+                {/* Error Notification Alert */}
+                {invoiceFormError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2.5 text-xs text-rose-800 font-semibold animate-in fade-in duration-150">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>{invoiceFormError}</span>
+                  </div>
+                )}
+                
+                {/* Field 1: Billed to (Select member) Dropdown */}
+                <div className="space-y-1.5">
+                  <label htmlFor="select-billed-to-member" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Billed To (Select Member) <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="select-billed-to-member"
+                      value={invoiceBilledToMemberId}
+                      onChange={(e) => setInvoiceBilledToMemberId(e.target.value)}
+                      className="w-full pl-3.5 pr-9 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all appearance-none cursor-pointer"
+                      required
+                    >
+                      <option value="">-- Select Member / Store Account --</option>
+                      {members.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} {m.storeLocation ? `— ${m.storeLocation}` : `(${m.role})`} • @{m.username}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+                  </div>
+
+                  {/* Selected Member Summary Preview */}
+                  {(() => {
+                    const selectedMember = members.find((m) => m.id === invoiceBilledToMemberId);
+                    if (!selectedMember) return null;
+                    return (
+                      <div className="mt-2 p-2.5 bg-gradient-to-r from-slate-50 to-blue-50/50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs animate-in fade-in duration-150">
+                        <div className="flex items-center space-x-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-[11px] shrink-0 shadow-2xs">
+                            {selectedMember.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-slate-900">{selectedMember.name}</span>
+                              <span className="text-[10px] font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded">
+                                @{selectedMember.username}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              {selectedMember.email} &bull; {selectedMember.phone}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="sm:text-right border-t sm:border-t-0 pt-1 sm:pt-0 border-slate-200">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Credit Allocation</span>
+                          <span className="font-mono font-bold text-emerald-700 text-xs">
+                            ${(selectedMember.creditAllocation || masterCreditLimit).toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                {/* Selected Member Summary Preview */}
-                {(() => {
-                  const selectedMember = members.find((m) => m.id === invoiceBilledToMemberId);
-                  if (!selectedMember) return null;
-                  return (
-                    <div className="mt-2 p-3 bg-gradient-to-r from-slate-50 to-blue-50/50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs animate-in fade-in duration-150">
-                      <div className="flex items-center space-x-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-blue-600 text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-2xs">
-                          {selectedMember.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
-                        </div>
+                {/* Field 2: Invoice Title Dropdown */}
+                <div className="space-y-1.5">
+                  <label htmlFor="select-invoice-title" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Invoice Title <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      id="select-invoice-title"
+                      value={invoiceTitle}
+                      onChange={(e) => handleInvoiceTitleChange(e.target.value as any)}
+                      className="w-full pl-3.5 pr-9 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all appearance-none cursor-pointer"
+                      required
+                    >
+                      <option value="Late Payment">Late Payment</option>
+                      <option value="Chargeback">Chargeback</option>
+                      <option value="Check Bounce">Check Bounce</option>
+                      <option value="Low Performance Penalty">Low Performance Penalty</option>
+                      <option value="Good Performance Bonus">Good Performance Bonus</option>
+                      <option value="Miscellenous">Miscellenous</option>
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
+                  </div>
+
+                  {/* Invoice Title Information Banner */}
+                  <div className="p-2 rounded-lg border text-xs flex items-center gap-2 bg-slate-50 border-slate-200">
+                    {invoiceTitle === 'Late Payment' && (
+                      <>
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Late Payment:</strong> Surcharge for overdue statements or delinquent accounts.
+                        </span>
+                      </>
+                    )}
+                    {invoiceTitle === 'Chargeback' && (
+                      <>
+                        <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Chargeback:</strong> Administrative penalty assessed for payment dispute reversals.
+                        </span>
+                      </>
+                    )}
+                    {invoiceTitle === 'Check Bounce' && (
+                      <>
+                        <XCircle className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Check Bounce:</strong> NSF fee or dishonored bank payment surcharge.
+                        </span>
+                      </>
+                    )}
+                    {invoiceTitle === 'Low Performance Penalty' && (
+                      <>
+                        <TrendingDown className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Low Performance Penalty:</strong> Penalty charge assessed for underperformance or service level infractions.
+                        </span>
+                      </>
+                    )}
+                    {invoiceTitle === 'Good Performance Bonus' && (
+                      <>
+                        <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Good Performance Bonus:</strong> Incentive reward or performance bonus credited to the member's account.
+                        </span>
+                      </>
+                    )}
+                    {invoiceTitle === 'Miscellenous' && (
+                      <>
+                        <Receipt className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span className="text-slate-600 text-[11px]">
+                          <strong>Miscellaneous:</strong> General commercial billing adjustment, credit adjustment, or special assessment.
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Row: Invoice Number & Reference # */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="input-invoice-number" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Invoice # <span className="text-rose-500">*</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setInvoiceNumberInput(generateRandomInvoiceNumber())}
+                        className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer flex items-center gap-1"
+                      >
+                        <RefreshCw className="w-2.5 h-2.5" /> Generate
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      id="input-invoice-number"
+                      value={invoiceNumberInput}
+                      onChange={(e) => setInvoiceNumberInput(e.target.value)}
+                      placeholder="INV-2026-XXXX"
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label htmlFor="input-order-ref" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Reference / Order #
+                    </label>
+                    <input
+                      type="text"
+                      id="input-order-ref"
+                      value={invoiceOrderRefInput}
+                      onChange={(e) => setInvoiceOrderRefInput(e.target.value)}
+                      placeholder="REF-XXXX or ORD-XXXX"
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Field: Invoice Amount ($) with support for negative and positive values */}
+                <div className="space-y-2 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="input-invoice-amount" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Invoice Amount ($) <span className="text-rose-500">*</span>
+                    </label>
+                    <span className="text-[11px] text-slate-500">
+                      Positive = Charge / Due &bull; Negative = Credit Memo
+                    </span>
+                  </div>
+
+                  {/* Clean direct input */}
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      id="input-invoice-amount"
+                      value={invoiceAmountInput}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        // Allow digits, single decimal point, and optional leading minus sign
+                        if (/^-?\d*\.?\d*$/.test(val) || val === '' || val === '-') {
+                          setInvoiceAmountInput(val);
+                        }
+                      }}
+                      placeholder="e.g. 50.00 or -50.00"
+                      className={`w-full px-3.5 py-2 bg-white border rounded-xl text-sm font-mono font-extrabold focus:outline-none focus:ring-2 transition-all ${
+                        (parseFloat(invoiceAmountInput) || 0) < 0
+                          ? 'border-emerald-300 text-emerald-700 focus:ring-emerald-500'
+                          : 'border-slate-300 text-slate-900 focus:ring-blue-500'
+                      }`}
+                      required
+                    />
+                  </div>
+
+                  {/* Quick Presets */}
+                  <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                    <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Presets:</span>
+                    {['-100.00', '-50.00', '-25.00', '25.00', '50.00', '100.00', '250.00'].map((amt) => {
+                      const isNeg = amt.startsWith('-');
+                      const isSelected = invoiceAmountInput === amt;
+                      return (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => setInvoiceAmountInput(amt)}
+                          className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md border transition-colors cursor-pointer ${
+                            isSelected
+                              ? isNeg
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                : 'bg-blue-600 text-white border-blue-600 shadow-2xs'
+                              : isNeg
+                              ? 'bg-white text-emerald-800 border-emerald-200 hover:bg-emerald-50'
+                              : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {isNeg ? `-$${amt.slice(1)}` : `+$${amt}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Real-time Calculated Balance Box */}
+                  {(() => {
+                    const enteredNum = parseFloat(invoiceAmountInput) || 0;
+                    const isNeg = enteredNum < 0;
+                    const selectedMember = members.find((m) => m.id === invoiceBilledToMemberId);
+                    const currentCredit = selectedMember 
+                      ? getMemberCreditSummary(selectedMember, members, orders, invoices, payments, masterCreditLimit)
+                      : null;
+
+                    return (
+                      <div 
+                        id="invoice-balance-calculation-preview"
+                        className={`p-2.5 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 transition-all mt-1 ${
+                          isNeg 
+                            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950' 
+                            : 'bg-blue-50/80 border-blue-200 text-blue-950'
+                        }`}
+                      >
                         <div>
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-slate-900">{selectedMember.name}</span>
-                            <span className="text-[10px] font-semibold text-blue-700 bg-blue-100 px-1.5 py-0.2 rounded">
-                              @{selectedMember.username}
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Calculated Balance:
+                          </span>
+                          <span className={`font-mono font-bold text-xs block ${isNeg ? 'text-emerald-700' : 'text-blue-700'}`}>
+                            {isNeg 
+                              ? `-$${Math.abs(enteredNum).toFixed(2)} (Credit Memo applied to account)` 
+                              : `$${enteredNum.toFixed(2)} (Amount Due payable by member)`}
+                          </span>
+                        </div>
+
+                        {selectedMember && currentCredit && (
+                          <div className="sm:text-right border-t sm:border-t-0 pt-1 sm:pt-0 border-slate-200/80 text-[11px]">
+                            <span className="text-slate-500 font-medium block">Projected Available Line:</span>
+                            <span className={`font-mono font-bold ${isNeg ? 'text-emerald-700' : 'text-blue-700'}`}>
+                              ${(currentCredit.availableCredit - enteredNum).toFixed(2)}
                             </span>
                           </div>
-                          <div className="text-[11px] text-slate-500">
-                            {selectedMember.email} &bull; {selectedMember.phone}
-                          </div>
-                        </div>
+                        )}
                       </div>
-                      <div className="sm:text-right border-t sm:border-t-0 pt-1 sm:pt-0 border-slate-200">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block">Credit Allocation</span>
-                        <span className="font-mono font-bold text-emerald-700 text-xs">
-                          ${(selectedMember.creditAllocation || masterCreditLimit).toLocaleString()}
-                        </span>
+                    );
+                  })()}
+                </div>
+
+                {/* Row: Issue Date & Due Date */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div className="space-y-1">
+                    <label htmlFor="input-invoice-date" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Issue Date
+                    </label>
+                    <input
+                      type="date"
+                      id="input-invoice-date"
+                      value={invoiceDateInput}
+                      onChange={(e) => setInvoiceDateInput(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor="input-invoice-due-date" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                        Due Date
+                      </label>
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const today = new Date().toISOString().split('T')[0];
+                            setInvoiceDueDateInput(today);
+                          }}
+                          className="text-blue-600 hover:underline font-semibold"
+                        >
+                          Today
+                        </button>
+                        <span>&bull;</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                            setInvoiceDueDateInput(d);
+                          }}
+                          className="text-blue-600 hover:underline font-semibold"
+                        >
+                          +15d
+                        </button>
+                        <span>&bull;</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const d = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                            setInvoiceDueDateInput(d);
+                          }}
+                          className="text-blue-600 hover:underline font-semibold"
+                        >
+                          +30d
+                        </button>
                       </div>
                     </div>
-                  );
-                })()}
-              </div>
-
-              {/* Field 2: Invoice Title Dropdown */}
-              <div className="space-y-1.5">
-                <label htmlFor="select-invoice-title" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Invoice Title <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <select
-                    id="select-invoice-title"
-                    value={invoiceTitle}
-                    onChange={(e) => handleInvoiceTitleChange(e.target.value as any)}
-                    className="w-full pl-3.5 pr-9 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all appearance-none cursor-pointer"
-                    required
-                  >
-                    <option value="Late Payment">Late Payment</option>
-                    <option value="Chargeback">Chargeback</option>
-                    <option value="Check Bounce">Check Bounce</option>
-                    <option value="Miscellenous">Miscellenous</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-3 pointer-events-none" />
-                </div>
-
-                {/* Invoice Title Information Banner */}
-                <div className="p-2.5 rounded-lg border text-xs flex items-start gap-2 bg-slate-50 border-slate-200">
-                  {invoiceTitle === 'Late Payment' && (
-                    <>
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                      <span className="text-slate-600 text-[11px]">
-                        <strong>Late Payment Assessment:</strong> Finance surcharge for overdue balance statements, delayed settlement periods, or delinquent accounts.
-                      </span>
-                    </>
-                  )}
-                  {invoiceTitle === 'Chargeback' && (
-                    <>
-                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                      <span className="text-slate-600 text-[11px]">
-                        <strong>Chargeback Penalty:</strong> Administrative charge assessed for bank disputes, credit reversals, or transaction clawbacks.
-                      </span>
-                    </>
-                  )}
-                  {invoiceTitle === 'Check Bounce' && (
-                    <>
-                      <XCircle className="w-4 h-4 text-purple-600 shrink-0 mt-0.5" />
-                      <span className="text-slate-600 text-[11px]">
-                        <strong>Check Bounce Surcharge:</strong> Returned check NSF penalty fee or dishonored bank transfer surcharge.
-                      </span>
-                    </>
-                  )}
-                  {invoiceTitle === 'Miscellenous' && (
-                    <>
-                      <Receipt className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                      <span className="text-slate-600 text-[11px]">
-                        <strong>Miscellaneous Statement:</strong> General dealer billing adjustment, restocking fee, courier surcharge, or special assessment.
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Row: Invoice Number & Reference # */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="input-invoice-number" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Invoice # <span className="text-rose-500">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setInvoiceNumberInput(generateRandomInvoiceNumber())}
-                      className="text-[10px] text-blue-600 hover:text-blue-800 font-semibold cursor-pointer flex items-center gap-1"
-                    >
-                      <RefreshCw className="w-2.5 h-2.5" /> Generate New
-                    </button>
+                    <input
+                      type="date"
+                      id="input-invoice-due-date"
+                      value={invoiceDueDateInput}
+                      onChange={(e) => setInvoiceDueDateInput(e.target.value)}
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                    />
                   </div>
-                  <input
-                    type="text"
-                    id="input-invoice-number"
-                    value={invoiceNumberInput}
-                    onChange={(e) => setInvoiceNumberInput(e.target.value)}
-                    placeholder="INV-2026-XXXX"
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                    required
-                  />
                 </div>
 
-                <div className="space-y-1">
-                  <label htmlFor="input-order-ref" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Reference / Order #
-                  </label>
-                  <input
-                    type="text"
-                    id="input-order-ref"
-                    value={invoiceOrderRefInput}
-                    onChange={(e) => setInvoiceOrderRefInput(e.target.value)}
-                    placeholder="REF-XXXX or ORD-XXXX"
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  />
-                </div>
-              </div>
-
-              {/* Field: Invoice Amount ($) & Preset Pills */}
-              <div className="space-y-1.5">
-                <label htmlFor="input-invoice-amount" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Invoice Amount ($) <span className="text-rose-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3.5 top-2 text-sm font-bold text-slate-400 font-mono">$</span>
-                  <input
-                    type="number"
-                    id="input-invoice-amount"
-                    step="0.01"
-                    min="0.01"
-                    value={invoiceAmountInput}
-                    onChange={(e) => setInvoiceAmountInput(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full pl-8 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-sm font-mono font-extrabold text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                    required
-                  />
-                </div>
-                {/* Presets */}
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Quick Presets:</span>
-                  {['25.00', '50.00', '100.00', '150.00', '250.00', '500.00', '1000.00'].map((amt) => (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setInvoiceAmountInput(amt)}
-                      className={`px-2 py-0.5 text-[11px] font-mono font-bold rounded-lg border transition-colors cursor-pointer ${
-                        invoiceAmountInput === amt
-                          ? 'bg-blue-600 text-white border-blue-600 shadow-2xs'
-                          : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200'
-                      }`}
-                    >
-                      ${amt}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Row: Issue Date & Due Date */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="space-y-1">
-                  <label htmlFor="input-invoice-date" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Issue Date
-                  </label>
-                  <input
-                    type="date"
-                    id="input-invoice-date"
-                    value={invoiceDateInput}
-                    onChange={(e) => setInvoiceDateInput(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label htmlFor="input-invoice-due-date" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Due Date
+                {/* Row: Payment Method & Initial Status */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <div className="space-y-1">
+                    <label htmlFor="select-invoice-method" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Payment Terms / Method
                     </label>
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const today = new Date().toISOString().split('T')[0];
-                          setInvoiceDueDateInput(today);
-                        }}
-                        className="text-blue-600 hover:underline font-semibold"
+                    <div className="relative">
+                      <select
+                        id="select-invoice-method"
+                        value={invoicePaymentMethodInput}
+                        onChange={(e) => setInvoicePaymentMethodInput(e.target.value)}
+                        className="w-full pl-3.5 pr-9 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white appearance-none cursor-pointer"
                       >
-                        Today
-                      </button>
-                      <span>&bull;</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const d = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                          setInvoiceDueDateInput(d);
-                        }}
-                        className="text-blue-600 hover:underline font-semibold"
-                      >
-                        +15d
-                      </button>
-                      <span>&bull;</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const d = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-                          setInvoiceDueDateInput(d);
-                        }}
-                        className="text-blue-600 hover:underline font-semibold"
-                      >
-                        +30d
-                      </button>
+                        <option value="ACH Transfer">ACH Transfer</option>
+                        <option value="Company Credit Line">Company Credit Line</option>
+                        <option value="Wire Transfer">Wire Transfer</option>
+                        <option value="Check">Check</option>
+                        <option value="Credit Card">Credit Card</option>
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
                     </div>
                   </div>
-                  <input
-                    type="date"
-                    id="input-invoice-due-date"
-                    value={invoiceDueDateInput}
-                    onChange={(e) => setInvoiceDueDateInput(e.target.value)}
-                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+
+                  <div className="space-y-1">
+                    <label htmlFor="select-invoice-status" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Initial Invoice Status
+                    </label>
+                    <div className="relative">
+                      <select
+                        id="select-invoice-status"
+                        value={invoiceStatusInput}
+                        onChange={(e) => setInvoiceStatusInput(e.target.value as any)}
+                        className="w-full pl-3.5 pr-9 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white appearance-none cursor-pointer"
+                      >
+                        <option value="Unpaid">Unpaid (Awaiting Payment)</option>
+                        <option value="Paid">Paid (Settled Immediately)</option>
+                        <option value="Processing">Processing (Pending Clearance)</option>
+                      </select>
+                      <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Field: Notes / Reason memo */}
+                <div className="space-y-1">
+                  <label htmlFor="textarea-invoice-notes" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Notes / Reason Memo (Optional)
+                  </label>
+                  <textarea
+                    id="textarea-invoice-notes"
+                    rows={2}
+                    value={invoiceNotesInput}
+                    onChange={(e) => setInvoiceNotesInput(e.target.value)}
+                    placeholder="Add specific invoice notes, check numbers, dispute IDs, or statement description..."
+                    className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
                   />
                 </div>
               </div>
 
-              {/* Row: Payment Method & Initial Status */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div className="space-y-1">
-                  <label htmlFor="select-invoice-method" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Payment Terms / Method
-                  </label>
-                  <div className="relative">
-                    <select
-                      id="select-invoice-method"
-                      value={invoicePaymentMethodInput}
-                      onChange={(e) => setInvoicePaymentMethodInput(e.target.value)}
-                      className="w-full pl-3.5 pr-9 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white appearance-none cursor-pointer"
-                    >
-                      <option value="ACH Transfer">ACH Transfer</option>
-                      <option value="Company Credit Line">Company Credit Line</option>
-                      <option value="Wire Transfer">Wire Transfer</option>
-                      <option value="Check">Check</option>
-                      <option value="Credit Card">Credit Card</option>
-                    </select>
-                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label htmlFor="select-invoice-status" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    Initial Invoice Status
-                  </label>
-                  <div className="relative">
-                    <select
-                      id="select-invoice-status"
-                      value={invoiceStatusInput}
-                      onChange={(e) => setInvoiceStatusInput(e.target.value as any)}
-                      className="w-full pl-3.5 pr-9 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white appearance-none cursor-pointer"
-                    >
-                      <option value="Unpaid">Unpaid (Awaiting Payment)</option>
-                      <option value="Paid">Paid (Settled Immediately)</option>
-                      <option value="Processing">Processing (Pending Clearance)</option>
-                    </select>
-                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Field: Notes / Reason memo */}
-              <div className="space-y-1">
-                <label htmlFor="textarea-invoice-notes" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Notes / Reason Memo (Optional)
-                </label>
-                <textarea
-                  id="textarea-invoice-notes"
-                  rows={2}
-                  value={invoiceNotesInput}
-                  onChange={(e) => setInvoiceNotesInput(e.target.value)}
-                  placeholder="Add specific invoice notes, check numbers, dispute IDs, or statement description..."
-                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white resize-none"
-                />
-              </div>
-
-              {/* Modal Actions */}
-              <div className="flex flex-col sm:flex-row items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
+              {/* Modal Actions (Sticky Footer) */}
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-2.5 px-6 py-3.5 border-t border-slate-100 bg-slate-50/90 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsCreateInvoiceOpen(false)}
                   id="btn-cancel-create-invoice"
-                  className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -7471,9 +7616,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     </div>
 
                     <div className="bg-white p-3 rounded-lg border border-emerald-100">
-                      <span className="text-[10px] uppercase font-bold text-slate-500 block">Invoice Billed</span>
-                      <span className="font-mono font-bold text-blue-700 text-sm">
-                        -${viewingInvoice.amount.toFixed(2)}
+                      <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                        {viewingInvoice.amount < 0 ? 'Credit Memo Adjustment' : 'Invoice Billed'}
+                      </span>
+                      <span className={`font-mono font-bold text-sm ${viewingInvoice.amount < 0 ? 'text-emerald-700 font-extrabold' : 'text-blue-700'}`}>
+                        {viewingInvoice.amount < 0 ? `-$${Math.abs(viewingInvoice.amount).toFixed(2)}` : `$${viewingInvoice.amount.toFixed(2)}`}
                       </span>
                     </div>
 
@@ -7509,20 +7656,33 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
                   <tr>
                     <td className="p-3">
-                      <span className="font-bold text-slate-900 block">{viewingInvoice.title || 'Wholesale Order Settlement'}</span>
-                      <span className="text-[11px] text-slate-500">
-                        {viewingInvoice.notes || `Commercial wholesale distribution adjustment statement for reference ${viewingInvoice.orderNumber}`}
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-slate-900 block">{viewingInvoice.title || 'Wholesale Order Settlement'}</span>
+                        {viewingInvoice.amount < 0 && (
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded border border-emerald-300">Credit Memo</span>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        {viewingInvoice.notes || (viewingInvoice.amount < 0 ? `Credit memo adjustment applied to reference ${viewingInvoice.orderNumber}` : `Commercial wholesale distribution statement for reference ${viewingInvoice.orderNumber}`)}
                       </span>
                     </td>
                     <td className="p-3 text-center">1</td>
-                    <td className="p-3 text-right font-mono">${viewingInvoice.amount.toFixed(2)}</td>
-                    <td className="p-3 text-right font-mono font-bold text-slate-900">${viewingInvoice.amount.toFixed(2)}</td>
+                    <td className="p-3 text-right font-mono">
+                      {viewingInvoice.amount < 0 ? `-$${Math.abs(viewingInvoice.amount).toFixed(2)}` : `$${viewingInvoice.amount.toFixed(2)}`}
+                    </td>
+                    <td className="p-3 text-right font-mono font-bold text-slate-900">
+                      {viewingInvoice.amount < 0 ? `-$${Math.abs(viewingInvoice.amount).toFixed(2)}` : `$${viewingInvoice.amount.toFixed(2)}`}
+                    </td>
                   </tr>
                 </tbody>
                 <tfoot className="bg-slate-50/80 border-t border-slate-200 font-bold text-xs">
                   <tr>
-                    <td colSpan={3} className="p-3 text-right text-slate-600 uppercase text-[10px]">Total Amount Due:</td>
-                    <td className="p-3 text-right font-mono text-base text-blue-700 font-extrabold">${viewingInvoice.amount.toFixed(2)}</td>
+                    <td colSpan={3} className="p-3 text-right text-slate-600 uppercase text-[10px]">
+                      {viewingInvoice.amount < 0 ? 'Total Credit Amount:' : 'Total Amount Due:'}
+                    </td>
+                    <td className={`p-3 text-right font-mono text-base font-extrabold ${viewingInvoice.amount < 0 ? 'text-emerald-700' : 'text-blue-700'}`}>
+                      {viewingInvoice.amount < 0 ? `-$${Math.abs(viewingInvoice.amount).toFixed(2)}` : `$${viewingInvoice.amount.toFixed(2)}`}
+                    </td>
                   </tr>
                 </tfoot>
               </table>

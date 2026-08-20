@@ -172,12 +172,17 @@ export function generateInvoicePdf({
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
-  doc.text('AMOUNT DUE', col4X, currentY + 24);
+  doc.text(invoice.amount < 0 ? 'CREDIT / ADJUSTMENT' : 'AMOUNT DUE', col4X, currentY + 24);
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
-  doc.setTextColor(16, 185, 129); // emerald-600
-  doc.text(`$${invoice.amount.toFixed(2)}`, col4X, currentY + 44);
+  if (invoice.amount < 0) {
+    doc.setTextColor(13, 148, 136); // teal-600
+    doc.text(`-$${Math.abs(invoice.amount).toFixed(2)}`, col4X, currentY + 44);
+  } else {
+    doc.setTextColor(16, 185, 129); // emerald-600
+    doc.text(`$${invoice.amount.toFixed(2)}`, col4X, currentY + 44);
+  }
 
   currentY += 92;
 
@@ -195,14 +200,15 @@ export function generateInvoicePdf({
     ]);
   } else {
     // Fallback single line description
+    const formattedAmt = invoice.amount < 0 ? `-$${Math.abs(invoice.amount).toFixed(2)}` : `$${invoice.amount.toFixed(2)}`;
     tableData = [
       [
         '1',
-        invoice.title || 'Wholesale Order Commercial Settlement',
+        invoice.title ? `${invoice.title}${invoice.amount < 0 ? ' (Credit Adjustment / Refund)' : ''}` : 'Wholesale Order Commercial Settlement',
         invoice.orderNumber || 'GEN-ITEM',
-        `$${invoice.amount.toFixed(2)}`,
+        formattedAmt,
         '1',
-        `$${invoice.amount.toFixed(2)}`,
+        formattedAmt,
       ],
     ];
   }
@@ -335,10 +341,15 @@ export function generateInvoicePdf({
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
   doc.setTextColor(15, 23, 42);
-  doc.text('Total Invoice Amount:', summaryX + 12, currentLineY);
+  doc.text(grandTotal < 0 ? 'Total Credit Amount:' : 'Total Invoice Amount:', summaryX + 12, currentLineY);
   doc.setFontSize(11);
-  doc.setTextColor(16, 185, 129);
-  doc.text(`$${grandTotal.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+  if (grandTotal < 0) {
+    doc.setTextColor(13, 148, 136); // teal-600
+    doc.text(`-$${Math.abs(grandTotal).toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+  } else {
+    doc.setTextColor(16, 185, 129); // emerald-600
+    doc.text(`$${grandTotal.toFixed(2)}`, summaryX + summaryWidth - 12, currentLineY, { align: 'right' });
+  }
 
   // Left Note / Policy info
   const noteX = margin;

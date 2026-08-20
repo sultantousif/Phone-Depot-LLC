@@ -415,7 +415,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
   const cartSubtotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
   const remainingCreditAfterCart = availableCredit - cartSubtotal;
-  const willExceedCredit = remainingCreditAfterCart < -0.001;
+  const willExceedCredit = remainingCreditAfterCart < -0.001 || cartSubtotal > (availableCredit > 0 ? availableCredit : 0) || availableCredit <= 0;
 
   // Handle Member Order Submission
   const handleSubmitMemberOrder = (e: React.FormEvent) => {
@@ -427,6 +427,22 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
       setOrderRestrictionAlert(
         paymentCycleInfo.restrictionReason ||
           `Order placement is temporarily locked. You have ${paymentCycleInfo.overdueInvoices.length} overdue invoice(s) past your ${paymentCycleInfo.paymentCycleDays}-day payment cycle totaling $${paymentCycleInfo.overdueBalance.toFixed(2)}. Please clear overdue invoices to resume placing orders.`
+      );
+      return;
+    }
+
+    // Enforce strict credit limit policy: No member can place orders exceeding their credit limit
+    if (availableCredit <= 0) {
+      setOrderRestrictionAlert(
+        `Order placement blocked: Your available credit line is ${availableCredit < 0 ? `-$${Math.abs(availableCredit).toFixed(2)}` : '$0.00'}. You cannot place new orders until existing balances or invoices are settled.`
+      );
+      return;
+    }
+
+    if (cartSubtotal > availableCredit || willExceedCredit) {
+      const excess = cartSubtotal - Math.max(0, availableCredit);
+      setOrderRestrictionAlert(
+        `Order placement blocked: Your order total ($${cartSubtotal.toFixed(2)}) exceeds your available credit limit ($${availableCredit.toFixed(2)}) by $${excess.toFixed(2)}. Members are not permitted to place orders exceeding their credit limit.`
       );
       return;
     }
@@ -472,11 +488,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     setOrderNotes('');
     setOrderRestrictionAlert(null);
     setOrderSubmittedAlert(
-      `Order ${newOrderNumber} has been successfully submitted with status: "Pending review and approval by Admin".${
-        willExceedCredit 
-          ? ` Note: This order brings your allocated credit balance to -${Math.abs(remainingCreditAfterCart).toFixed(2)} (in negative).` 
-          : ''
-      }`
+      `Order ${newOrderNumber} has been successfully submitted with status: "Pending review and approval by Admin".`
     );
   };
 
@@ -1335,7 +1347,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     </div>
                   </div>
 
-                  {/* Warning if Credit Limit Exceeded */}
+                  {/* Warning if Credit Limit Exceeded or Invoices Overdue */}
                   {paymentCycleInfo.hasOverdueInvoices ? (
                     <div className="p-3 bg-rose-50 border border-rose-300 rounded-lg text-rose-900 text-xs font-semibold flex items-start gap-2">
                       <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
@@ -1344,12 +1356,20 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                         <span>You have overdue invoices exceeding your {paymentCycleInfo.paymentCycleDays}-day cycle. Please settle pending invoices before submitting new orders.</span>
                       </div>
                     </div>
-                  ) : willExceedCredit ? (
-                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg text-amber-900 text-xs font-semibold flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  ) : availableCredit <= 0 ? (
+                    <div className="p-3 bg-rose-50 border border-rose-300 rounded-lg text-rose-900 text-xs font-semibold flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                       <div>
-                        <span className="font-bold">Credit Line Will Go Negative: </span>
-                        <span>This order (${cartSubtotal.toFixed(2)}) brings your credit line balance to -${Math.abs(remainingCreditAfterCart).toFixed(2)}. The order will be submitted for Admin Review & Approval.</span>
+                        <span className="font-bold">Credit Limit Exhausted: </span>
+                        <span>Your available credit is {availableCredit < 0 ? `-$${Math.abs(availableCredit).toFixed(2)}` : '$0.00'}. Members cannot place new orders until existing invoices are settled or credit is replenished.</span>
+                      </div>
+                    </div>
+                  ) : willExceedCredit ? (
+                    <div className="p-3 bg-rose-50 border border-rose-300 rounded-lg text-rose-900 text-xs font-semibold flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold">Order Exceeds Credit Limit: </span>
+                        <span>This order (${cartSubtotal.toFixed(2)}) exceeds your available credit line (${availableCredit.toFixed(2)}) by ${(cartSubtotal - Math.max(0, availableCredit)).toFixed(2)}. Members are not allowed to place orders exceeding their credit limit.</span>
                       </div>
                     </div>
                   ) : (
@@ -1362,14 +1382,12 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                   <button
                     type="button"
                     id="submit-member-order-btn"
-                    disabled={cartItemsWithDetails.length === 0 || !paymentCycleInfo.canPlaceOrders}
+                    disabled={cartItemsWithDetails.length === 0 || !paymentCycleInfo.canPlaceOrders || willExceedCredit || availableCredit <= 0}
                     onClick={handleSubmitMemberOrder}
-                    className={`w-full py-3 text-white font-bold text-xs rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                      cartItemsWithDetails.length === 0 || !paymentCycleInfo.canPlaceOrders
-                        ? 'bg-slate-300 cursor-not-allowed text-slate-500'
-                        : willExceedCredit
-                        ? 'bg-amber-600 hover:bg-amber-700 active:scale-[0.99]'
-                        : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99]'
+                    className={`w-full py-3 font-bold text-xs rounded-lg shadow-xs transition-all flex items-center justify-center gap-2 ${
+                      cartItemsWithDetails.length === 0 || !paymentCycleInfo.canPlaceOrders || willExceedCredit || availableCredit <= 0
+                        ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
+                        : 'bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white cursor-pointer'
                     }`}
                   >
                     {!paymentCycleInfo.canPlaceOrders ? (
@@ -1377,14 +1395,20 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                         <AlertTriangle className="w-4 h-4 text-rose-500" />
                         <span>Order Placement Locked (Overdue Invoices)</span>
                       </>
+                    ) : availableCredit <= 0 ? (
+                      <>
+                        <AlertCircle className="w-4 h-4 text-rose-500" />
+                        <span>Credit Limit Exhausted ({availableCredit < 0 ? `-$${Math.abs(availableCredit).toFixed(2)}` : '$0.00'})</span>
+                      </>
+                    ) : willExceedCredit ? (
+                      <>
+                        <AlertCircle className="w-4 h-4 text-rose-500" />
+                        <span>Exceeds Credit Limit (Over by ${(cartSubtotal - Math.max(0, availableCredit)).toFixed(2)})</span>
+                      </>
                     ) : (
                       <>
                         <Send className="w-4 h-4" />
-                        <span>
-                          {willExceedCredit 
-                            ? `Submit Order for Admin Review (Balance: -${Math.abs(remainingCreditAfterCart).toFixed(2)})`
-                            : 'Submit Order for Admin Review & Approval'}
-                        </span>
+                        <span>Submit Order for Admin Review & Approval</span>
                       </>
                     )}
                   </button>
@@ -1712,6 +1736,14 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
                                 Check Bounce
                               </span>
+                            ) : inv.title === 'Low Performance Penalty' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-50 text-orange-700 border border-orange-200">
+                                Low Performance Penalty
+                              </span>
+                            ) : inv.title === 'Good Performance Bonus' ? (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Good Performance Bonus
+                              </span>
                             ) : inv.title === 'Miscellenous' ? (
                               <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
                                 Miscellenous
@@ -1725,11 +1757,29 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                           <td className="p-4 font-mono text-slate-700">{inv.orderNumber}</td>
                           <td className="p-4 text-slate-600">{inv.date}</td>
                           <td className="p-4 text-slate-600">{inv.dueDate}</td>
-                          <td className="p-4 font-bold text-slate-900 font-mono">${inv.amount.toFixed(2)}</td>
+                          <td className="p-4 font-bold font-mono text-xs">
+                            {inv.amount < 0 ? (
+                              <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                                <span>-${Math.abs(inv.amount).toFixed(2)}</span>
+                                <span className="text-[9px] font-sans font-bold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">Credit</span>
+                              </span>
+                            ) : (
+                              <span className="text-slate-900">${inv.amount.toFixed(2)}</span>
+                            )}
+                          </td>
 
                           {/* Current Balance Due */}
                           <td className="p-4">
-                            {paymentSummary.currentBalanceDue > 0 ? (
+                            {paymentSummary.currentBalanceDue < -0.001 ? (
+                              <div className="space-y-0.5">
+                                <span className="text-emerald-700 font-extrabold font-mono text-xs block">
+                                  -${Math.abs(paymentSummary.currentBalanceDue).toFixed(2)} Credit
+                                </span>
+                                <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                  Credit Balance
+                                </span>
+                              </div>
+                            ) : paymentSummary.currentBalanceDue > 0.001 ? (
                               <div className="space-y-0.5">
                                 <span className="text-rose-700 font-extrabold font-mono text-xs block">
                                   ${paymentSummary.currentBalanceDue.toFixed(2)} Due
@@ -1978,11 +2028,29 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                         </td>
                         <td className="p-3 font-mono">{inv.orderNumber}</td>
                         <td className="p-3">{inv.date}</td>
-                        <td className="p-3 font-bold font-mono text-slate-900">${inv.amount.toFixed(2)}</td>
+                        <td className="p-3 font-bold font-mono text-xs">
+                          {inv.amount < 0 ? (
+                            <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                              <span>-${Math.abs(inv.amount).toFixed(2)}</span>
+                              <span className="text-[9px] font-sans font-bold px-1 py-0.2 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">Credit</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-900">${inv.amount.toFixed(2)}</span>
+                          )}
+                        </td>
 
                         {/* Current Balance Due */}
                         <td className="p-3">
-                          {paymentSummary.currentBalanceDue > 0 ? (
+                          {paymentSummary.currentBalanceDue < -0.001 ? (
+                            <div className="space-y-0.5">
+                              <span className="text-emerald-700 font-extrabold font-mono text-xs block">
+                                -${Math.abs(paymentSummary.currentBalanceDue).toFixed(2)} Credit
+                              </span>
+                              <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-block">
+                                Credit Balance
+                              </span>
+                            </div>
+                          ) : paymentSummary.currentBalanceDue > 0.001 ? (
                             <div className="space-y-0.5">
                               <span className="text-rose-700 font-extrabold font-mono text-xs block">
                                 ${paymentSummary.currentBalanceDue.toFixed(2)} Due

@@ -38,6 +38,7 @@ export interface InvoicePaymentSummary {
 
 /**
  * Calculates payment history, settled payments, and current balance due for an invoice.
+ * Supports both standard debit invoices and negative credit memos/adjustments.
  */
 export function getInvoicePaymentSummary(
   invoice: InvoiceItem,
@@ -47,10 +48,37 @@ export function getInvoicePaymentSummary(
     (p) => p.invoiceNumber === invoice.invoiceNumber && p.status === 'Completed'
   );
   const totalPaid = invoicePayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-  const invoiceTotal = invoice.amount || 0;
-  const currentBalanceDue = Math.max(0, invoiceTotal - totalPaid);
-  const isFullyPaid = currentBalanceDue <= 0.001;
-  const isPartiallyPaid = totalPaid > 0.001 && currentBalanceDue > 0.001;
+  const invoiceTotal = Number(invoice.amount) || 0;
+
+  let currentBalanceDue = 0;
+  let isFullyPaid = false;
+  let isPartiallyPaid = false;
+
+  if (invoiceTotal < 0) {
+    // Negative Invoice (Credit Memo / Refund / Credit Adjustment)
+    if (invoice.status === 'Paid') {
+      currentBalanceDue = 0;
+      isFullyPaid = true;
+      isPartiallyPaid = false;
+    } else {
+      // For negative invoice: balance due is negative (credit to account) until settled
+      const remainingAbs = Math.abs(invoiceTotal) - Math.abs(totalPaid);
+      if (remainingAbs <= 0.001) {
+        currentBalanceDue = 0;
+        isFullyPaid = true;
+        isPartiallyPaid = false;
+      } else {
+        currentBalanceDue = -remainingAbs;
+        isFullyPaid = false;
+        isPartiallyPaid = Math.abs(totalPaid) > 0.001;
+      }
+    }
+  } else {
+    // Positive Invoice (Debit / Fee / Order Billing)
+    currentBalanceDue = Math.max(0, invoiceTotal - totalPaid);
+    isFullyPaid = currentBalanceDue <= 0.001;
+    isPartiallyPaid = totalPaid > 0.001 && currentBalanceDue > 0.001;
+  }
 
   let status: 'Paid' | 'Partial' | 'Unpaid' | 'Overdue' | 'Processing' = invoice.status;
   if (isFullyPaid) {
@@ -59,6 +87,8 @@ export function getInvoicePaymentSummary(
     status = 'Partial';
   } else if (invoice.status === 'Overdue') {
     status = 'Overdue';
+  } else if (invoice.status === 'Processing') {
+    status = 'Processing';
   } else {
     status = 'Unpaid';
   }
@@ -78,6 +108,7 @@ export function getInvoicePaymentSummary(
  * Resolves comprehensive member credit summary across all orders, invoices, and payments.
  * Handles negative credit line (when orders surpass credit limit) and surplus credit line
  * (when payments exceed order totals, adding extra to the credit allocation).
+ * Also incorporates standalone positive and negative adjustment invoices.
  */
 export function getMemberCreditSummary(
   memberIdentifier: {
@@ -147,9 +178,24 @@ export function getMemberCreditSummary(
     return isMemberMatch && isCommitted;
   });
 
-  const totalCommittedOrders = activeOrders.reduce((sum, o) => sum + (o.total || o.subtotal || 0), 0);
+  const ordersSubtotal = activeOrders.reduce((sum, o) => sum + (o.total || o.subtotal || 0), 0);
 
-  // 4. Find member invoice numbers to also associate payments
+  // 4. Incorporate standalone invoices (positive fees like late payments, or negative credit memos)
+  const standaloneInvoices = invoices.filter((inv) => {
+    const isMemberMatch =
+      (inv.memberUsername && memberUsernames.includes(inv.memberUsername.toLowerCase())) ||
+      (inv.memberId && memberIds.includes(inv.memberId)) ||
+      (inv.customerName && memberNames.some((n) => inv.customerName.toLowerCase().includes(n))) ||
+      (inv.billedTo && memberNames.some((n) => inv.billedTo.toLowerCase().includes(n)));
+
+    const isFromActiveOrder = activeOrders.some((o) => o.orderNumber === inv.orderNumber);
+    return isMemberMatch && !isFromActiveOrder;
+  });
+
+  const standaloneInvoicesTotal = standaloneInvoices.reduce((sum, inv) => sum + (Number(inv.amount) || 0), 0);
+  const totalCommittedOrders = Math.max(0, ordersSubtotal + standaloneInvoicesTotal);
+
+  // 5. Find member invoice numbers to also associate payments
   const memberInvoiceNumbers = invoices
     .filter((inv) => {
       return (
@@ -161,7 +207,7 @@ export function getMemberCreditSummary(
     })
     .map((inv) => inv.invoiceNumber);
 
-  // 5. Filter completed payments for this member
+  // 6. Filter completed payments for this member
   const completedPayments = payments.filter((p) => {
     if (p.status !== 'Completed') return false;
     if (p.memberUsername && memberUsernames.includes(p.memberUsername.toLowerCase())) return true;
@@ -172,13 +218,14 @@ export function getMemberCreditSummary(
 
   const totalCompletedPayments = completedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
-  // 6. Compute net balance due, surplus, and available credit
+  // 7. Compute net balance due, surplus, and available credit
   // Orders = $700, Payments = $0 -> Available = $500 - $700 = -$200 (Negative credit line!)
   // Orders = $700, Payments = $800 -> Surplus = $100 -> Effective Credit = $600 -> Available = $600!
-  const netDueBalance = Math.max(0, totalCommittedOrders - totalCompletedPayments);
-  const surplusPayment = Math.max(0, totalCompletedPayments - totalCommittedOrders);
+  const effectiveTotalDebits = ordersSubtotal + standaloneInvoicesTotal;
+  const netDueBalance = Math.max(0, effectiveTotalDebits - totalCompletedPayments);
+  const surplusPayment = Math.max(0, totalCompletedPayments - effectiveTotalDebits);
   const effectiveCreditAllocation = baseCreditAllocation + surplusPayment;
-  const availableCredit = baseCreditAllocation - totalCommittedOrders + totalCompletedPayments;
+  const availableCredit = baseCreditAllocation - effectiveTotalDebits + totalCompletedPayments;
 
   const isNegative = availableCredit < -0.001;
   const isSurplus = surplusPayment > 0.001;

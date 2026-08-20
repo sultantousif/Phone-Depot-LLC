@@ -157,7 +157,14 @@ export interface OrderItem {
   notes?: string;
 }
 
-export type InvoiceTitle = 'Late Payment' | 'Chargeback' | 'Check Bounce' | 'Miscellenous' | string;
+export type InvoiceTitle = 
+  | 'Late Payment' 
+  | 'Chargeback' 
+  | 'Check Bounce' 
+  | 'Low Performance Penalty' 
+  | 'Good Performance Bonus' 
+  | 'Miscellenous' 
+  | string;
 
 export interface InvoiceItem {
   invoiceNumber: string;
