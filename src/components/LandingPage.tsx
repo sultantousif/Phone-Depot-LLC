@@ -11,7 +11,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
       {/* Top Brand Header */}
       <header className="w-full bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="h-0.5 w-full bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600" />
-        <div className="max-w-7xl mx-auto py-4 px-6 md:px-12 flex items-center justify-end">
+        <div className="max-w-7xl mx-auto py-3 px-6 md:px-12 flex items-center justify-between">
+          <div className="flex items-center">
+            <img
+              src="/logo.png"
+              alt="HG WORLD CLASS"
+              referrerPolicy="no-referrer"
+              className="object-contain select-none"
+              style={{ width: '187px', height: '127px' }}
+            />
+          </div>
           <div className="text-xs font-semibold text-slate-400">
             Secure Authorized Access
           </div>
@@ -25,7 +34,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
             Select Portal Access
           </span>
           <h2 className="text-3xl md:text-4xl font-extrabold text-slate-900 tracking-tight mb-3">
-            Welcome to Distribution Portal
+            Welcome to HG World Class Portal
           </h2>
           <p className="text-sm md:text-base text-slate-600">
             Please select your authorized portal role below to sign in.
