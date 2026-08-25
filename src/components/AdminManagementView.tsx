@@ -29,6 +29,7 @@ import {
   FileText
 } from 'lucide-react';
 import { AdminAccount, User } from '../types';
+import { generateCompliantTempPassword } from '../utils/passwordGenerator';
 
 interface AdminManagementViewProps {
   user: User;
@@ -136,7 +137,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
   const [username, setUsername] = useState('');
   const [phone, setPhone] = useState('');
   const [adminLevel, setAdminLevel] = useState<AdminAccount['adminLevel']>('Operations Admin');
-  const [password, setPassword] = useState('Admin2026!');
+  const [password, setPassword] = useState(() => generateCompliantTempPassword('Admin'));
   const [showPassword, setShowPassword] = useState(false);
   const [permissions, setPermissions] = useState<string[]>(ADMIN_LEVEL_PRESETS['Operations Admin'].defaultPermissions);
   const [notes, setNotes] = useState('');
@@ -163,12 +164,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
   };
 
   const handleGenerateSecurePassword = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*';
-    let res = '';
-    for (let i = 0; i < 10; i++) {
-      res += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setPassword(`${res}26!`);
+    setPassword(generateCompliantTempPassword('Admin'));
   };
 
   const handleLevelChange = (newLevel: AdminAccount['adminLevel']) => {
@@ -225,7 +221,7 @@ export const AdminManagementView: React.FC<AdminManagementViewProps> = ({
       permissions: permissions.length > 0 ? permissions : ['View Invoices & Payments'],
       status: 'Active',
       dateAdded: new Date().toISOString().split('T')[0],
-      tempPassword: password.trim() || 'Admin2026!',
+      tempPassword: password.trim() || generateCompliantTempPassword('Admin'),
       notes: notes.trim()
     };
 

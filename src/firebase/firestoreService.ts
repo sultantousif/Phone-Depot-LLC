@@ -13,10 +13,7 @@ import { db, handleFirestoreError, OperationType } from './config';
 import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
 import { 
   SAMPLE_PRODUCTS, 
-  SAMPLE_ORDERS, 
-  SAMPLE_INVOICES, 
-  SAMPLE_PAYMENTS, 
-  INITIAL_MEMBERS,
+  SAMPLE_ORDERS,
   INITIAL_ADMINS
 } from '../data/sampleData';
 
@@ -29,7 +26,7 @@ const MEMBERS_COL = 'members';
 const ADMINS_COL = 'admins';
 const SETTINGS_COL = 'shopSettings';
 
-// Initialize and seed Firestore if empty
+// Initialize and seed Firestore if empty / remove legacy mock records
 export async function initializeFirestoreData() {
   try {
     const productsSnap = await getDocs(collection(db, PRODUCTS_COL));
@@ -45,7 +42,6 @@ export async function initializeFirestoreData() {
 
     const ordersSnap = await getDocs(collection(db, ORDERS_COL));
     if (ordersSnap.empty && SAMPLE_ORDERS.length > 0) {
-      console.log('Seeding initial Firestore orders...');
       const batch = writeBatch(db);
       SAMPLE_ORDERS.forEach((order) => {
         const ref = doc(db, ORDERS_COL, order.id);
@@ -54,42 +50,49 @@ export async function initializeFirestoreData() {
       await batch.commit();
     }
 
-    const invoicesSnap = await getDocs(collection(db, INVOICES_COL));
-    if (invoicesSnap.empty) {
-      console.log('Seeding initial Firestore invoices...');
-      const batch = writeBatch(db);
-      SAMPLE_INVOICES.forEach((inv) => {
-        const ref = doc(db, INVOICES_COL, inv.invoiceNumber);
-        batch.set(ref, inv);
-      });
-      await batch.commit();
+    // Clean legacy mock invoices if they were previously seeded into Firestore
+    const legacyMockInvoiceNumbers = ['INV-2026-8491', 'INV-2026-7910', 'INV-2026-6824'];
+    for (const invNum of legacyMockInvoiceNumbers) {
+      try {
+        await deleteDoc(doc(db, INVOICES_COL, invNum));
+      } catch {
+        // ignore if not present
+      }
     }
 
-    const paymentsSnap = await getDocs(collection(db, PAYMENTS_COL));
-    if (paymentsSnap.empty) {
-      console.log('Seeding initial Firestore payments...');
-      const batch = writeBatch(db);
-      SAMPLE_PAYMENTS.forEach((pmt) => {
-        const ref = doc(db, PAYMENTS_COL, pmt.paymentId);
-        batch.set(ref, pmt);
-      });
-      await batch.commit();
+    // Clean legacy mock payments if previously seeded
+    const legacyMockPaymentIds = ['PAY-2026-9104'];
+    for (const pmtId of legacyMockPaymentIds) {
+      try {
+        await deleteDoc(doc(db, PAYMENTS_COL, pmtId));
+      } catch {
+        // ignore if not present
+      }
     }
 
-    const membersSnap = await getDocs(collection(db, MEMBERS_COL));
-    if (membersSnap.empty) {
-      console.log('Seeding initial Firestore members...');
-      const batch = writeBatch(db);
-      INITIAL_MEMBERS.forEach((mem) => {
-        const ref = doc(db, MEMBERS_COL, mem.id);
-        batch.set(ref, mem);
-      });
-      await batch.commit();
+    // Clean legacy mock members if previously seeded
+    const legacyMockMemberIds = ['mem-101', 'mem-102', 'mem-103', 'mem-104'];
+    for (const memId of legacyMockMemberIds) {
+      try {
+        await deleteDoc(doc(db, MEMBERS_COL, memId));
+      } catch {
+        // ignore if not present
+      }
+    }
+
+    // Clean legacy fictional admins
+    const legacyMockAdminIds = ['ADM-1002', 'ADM-1003'];
+    for (const admId of legacyMockAdminIds) {
+      try {
+        await deleteDoc(doc(db, ADMINS_COL, admId));
+      } catch {
+        // ignore if not present
+      }
     }
 
     const adminsSnap = await getDocs(collection(db, ADMINS_COL));
     if (adminsSnap.empty && INITIAL_ADMINS.length > 0) {
-      console.log('Seeding initial Firestore admins...');
+      console.log('Seeding primary Firestore admins...');
       const batch = writeBatch(db);
       INITIAL_ADMINS.forEach((adm) => {
         const ref = doc(db, ADMINS_COL, adm.id);
@@ -98,8 +101,7 @@ export async function initializeFirestoreData() {
       await batch.commit();
     }
   } catch (error) {
-    console.error('Error during initial Firestore seeding:', error);
-    // Non-blocking, fallback gracefully
+    console.error('Error during initial Firestore setup:', error);
   }
 }
 
@@ -114,9 +116,7 @@ export function subscribeToProducts(callback: (products: ProductItem[]) => void)
       snapshot.forEach((docSnap) => {
         prods.push({ id: docSnap.id, ...docSnap.data() } as ProductItem);
       });
-      if (prods.length > 0) {
-        callback(prods);
-      }
+      callback(prods);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, PRODUCTS_COL);
@@ -133,9 +133,7 @@ export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
       snapshot.forEach((docSnap) => {
         ords.push({ id: docSnap.id, ...docSnap.data() } as OrderItem);
       });
-      if (ords.length > 0) {
-        callback(ords);
-      }
+      callback(ords);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, ORDERS_COL);
@@ -152,9 +150,7 @@ export function subscribeToInvoices(callback: (invoices: InvoiceItem[]) => void)
       snapshot.forEach((docSnap) => {
         invs.push({ ...docSnap.data() } as InvoiceItem);
       });
-      if (invs.length > 0) {
-        callback(invs);
-      }
+      callback(invs);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, INVOICES_COL);
@@ -171,9 +167,7 @@ export function subscribeToPayments(callback: (payments: PaymentItem[]) => void)
       snapshot.forEach((docSnap) => {
         pmts.push({ ...docSnap.data() } as PaymentItem);
       });
-      if (pmts.length > 0) {
-        callback(pmts);
-      }
+      callback(pmts);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, PAYMENTS_COL);

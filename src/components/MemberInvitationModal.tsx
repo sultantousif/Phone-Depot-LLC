@@ -349,7 +349,7 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
                   </div>
                   <div className="bg-white/80 p-2 rounded border border-amber-200/60">
                     <span className="text-slate-500 block text-[10px]">Initial Password:</span>
-                    <strong className="text-slate-900">{member.tempPassword || member.password || 'metro2026'}</strong>
+                    <strong className="text-slate-900">{member.tempPassword || member.password || 'Metro2026!'}</strong>
                   </div>
                 </div>
               </div>

@@ -8,7 +8,7 @@ import {
   CATEGORY_LABELS,
   PRODUCTS_UPDATED_EVENT
 } from '../utils/productUtils';
-import { INITIAL_MEMBERS, SAMPLE_PRODUCTS } from '../data/sampleData';
+import { SAMPLE_PRODUCTS } from '../data/sampleData';
 import {
   SlidersHorizontal,
   Upload,
@@ -58,11 +58,14 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
       const saved = localStorage.getItem('distro_team_members');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const legacyIds = ['mem-101', 'mem-102', 'mem-103', 'mem-104'];
+          return parsed.filter((m) => !legacyIds.includes(m.id));
+        }
       }
-      return INITIAL_MEMBERS;
+      return [];
     } catch {
-      return INITIAL_MEMBERS;
+      return [];
     }
   });
 

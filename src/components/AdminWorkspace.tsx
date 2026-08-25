@@ -13,13 +13,11 @@ import {
 } from '../types';
 import { 
   SAMPLE_PRODUCTS,
-  SAMPLE_INVOICES,
-  INITIAL_MEMBERS,
-  INITIAL_ADMINS,
-  SAMPLE_PAYMENTS
+  INITIAL_ADMINS
 } from '../data/sampleData';
 import { ShopSettingsManager } from './ShopSettingsManager';
 import { AdminManagementView } from './AdminManagementView';
+import { generateCompliantTempPassword } from '../utils/passwordGenerator';
 import { loadStoredProducts, saveStoredProducts, PRODUCTS_UPDATED_EVENT } from '../utils/productUtils';
 import { 
   Search, 
@@ -191,17 +189,20 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     localStorage.setItem('distro_orders', JSON.stringify(orders));
   }, [orders]);
 
-  // Dynamic Invoices State (persisted locally, initial sample invoices if uninitialized)
+  // Dynamic Invoices State (persisted locally)
   const [invoices, setInvoices] = useState<InvoiceItem[]>(() => {
     try {
       const saved = localStorage.getItem('distro_invoices');
       if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const legacyIds = ['INV-2026-8491', 'INV-2026-7910', 'INV-2026-6824'];
+          return parsed.filter((inv) => !legacyIds.includes(inv.invoiceNumber));
+        }
       }
-      return SAMPLE_INVOICES;
+      return [];
     } catch {
-      return SAMPLE_INVOICES;
+      return [];
     }
   });
 
@@ -209,17 +210,20 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     localStorage.setItem('distro_invoices', JSON.stringify(invoices));
   }, [invoices]);
 
-  // Dynamic Payments State (persisted locally, initial sample payments if uninitialized)
+  // Dynamic Payments State (persisted locally)
   const [payments, setPayments] = useState<PaymentItem[]>(() => {
     try {
       const saved = localStorage.getItem('distro_payments');
       if (saved !== null) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          const legacyIds = ['PAY-2026-9104'];
+          return parsed.filter((pmt) => !legacyIds.includes(pmt.paymentId));
+        }
       }
-      return SAMPLE_PAYMENTS;
+      return [];
     } catch {
-      return SAMPLE_PAYMENTS;
+      return [];
     }
   });
 
@@ -227,17 +231,20 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     localStorage.setItem('distro_payments', JSON.stringify(payments));
   }, [payments]);
 
-  // Dynamic Team Members State (persisted locally, initial sample members if empty)
+  // Dynamic Team Members State (persisted locally)
   const [members, setMembers] = useState<TeamMember[]>(() => {
     try {
       const saved = localStorage.getItem('distro_team_members');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const legacyIds = ['mem-101', 'mem-102', 'mem-103', 'mem-104'];
+          return parsed.filter((m) => !legacyIds.includes(m.id));
+        }
       }
-      return INITIAL_MEMBERS;
+      return [];
     } catch {
-      return INITIAL_MEMBERS;
+      return [];
     }
   });
 
@@ -251,7 +258,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       const saved = localStorage.getItem('distro_admin_accounts');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const legacyAdmins = ['ADM-1002', 'ADM-1003'];
+          return parsed.filter((a) => !legacyAdmins.includes(a.id));
+        }
       }
       return INITIAL_ADMINS;
     } catch {
@@ -504,18 +514,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   };
 
   const generateRandomTempPassword = () => {
-    const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz';
-    const numbers = '23456789';
-    const symbols = '!@#$%&*';
-    let result = '';
-    for (let i = 0; i < 4; i++) {
-      result += letters.charAt(Math.floor(Math.random() * letters.length));
-    }
-    for (let i = 0; i < 3; i++) {
-      result += numbers.charAt(Math.floor(Math.random() * numbers.length));
-    }
-    result += symbols.charAt(Math.floor(Math.random() * symbols.length));
-    return `Tmp#${result}`;
+    return generateCompliantTempPassword('Metro');
   };
 
   const handleConfirmSummaryCredentials = () => {

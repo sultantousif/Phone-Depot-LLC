@@ -16,7 +16,7 @@ import {
   fetchAdminsFromFirestore, 
   fetchMembersFromFirestore 
 } from '../firebase/firestoreService';
-import { INITIAL_ADMINS, INITIAL_MEMBERS } from '../data/sampleData';
+import { INITIAL_ADMINS } from '../data/sampleData';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -71,19 +71,29 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       const savedMembers = localStorage.getItem('distro_team_members');
       if (savedMembers) {
         const parsed = JSON.parse(savedMembers);
-        if (Array.isArray(parsed) && parsed.length > 0) setRegisteredMembers(parsed);
+        if (Array.isArray(parsed)) {
+          const legacyIds = ['mem-101', 'mem-102', 'mem-103', 'mem-104'];
+          setRegisteredMembers(parsed.filter((m: TeamMember) => !legacyIds.includes(m.id)));
+        } else {
+          setRegisteredMembers([]);
+        }
       } else {
-        setRegisteredMembers(INITIAL_MEMBERS);
+        setRegisteredMembers([]);
       }
     } catch {
-      setRegisteredMembers(INITIAL_MEMBERS);
+      setRegisteredMembers([]);
     }
 
     try {
       const savedAdmins = localStorage.getItem('distro_admin_accounts');
       if (savedAdmins) {
         const parsed = JSON.parse(savedAdmins);
-        if (Array.isArray(parsed) && parsed.length > 0) setRegisteredAdmins(parsed);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const legacyAdmins = ['ADM-1002', 'ADM-1003'];
+          setRegisteredAdmins(parsed.filter((a: AdminAccount) => !legacyAdmins.includes(a.id)));
+        } else {
+          setRegisteredAdmins(INITIAL_ADMINS);
+        }
       } else {
         setRegisteredAdmins(INITIAL_ADMINS);
       }
@@ -93,10 +103,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     // 2. Fetch fresh from Firestore
     fetchMembersFromFirestore().then((mems) => {
-      if (mems.length > 0) {
-        setRegisteredMembers(mems);
-        localStorage.setItem('distro_team_members', JSON.stringify(mems));
-      }
+      setRegisteredMembers(mems);
+      localStorage.setItem('distro_team_members', JSON.stringify(mems));
     });
 
     fetchAdminsFromFirestore().then((adms) => {
@@ -108,10 +116,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
     // 3. Realtime Firestore subscribers
     const unsubMembers = subscribeToMembers((mems) => {
-      if (mems.length > 0) {
-        setRegisteredMembers(mems);
-        localStorage.setItem('distro_team_members', JSON.stringify(mems));
-      }
+      setRegisteredMembers(mems);
+      localStorage.setItem('distro_team_members', JSON.stringify(mems));
     });
 
     const unsubAdmins = subscribeToAdmins((adms) => {

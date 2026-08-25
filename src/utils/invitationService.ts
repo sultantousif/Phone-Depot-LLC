@@ -1,4 +1,5 @@
 import { TeamMember } from '../types';
+import { generateCompliantTempPassword } from './passwordGenerator';
 
 /**
  * Generates a direct invitation setup URL for a member.
@@ -9,7 +10,7 @@ export function generateMemberInviteUrl(member: TeamMember): string {
   const username = member.tempUsername || member.username || '';
   const email = member.email || '';
   const inviteCode = member.id || '';
-  const pass = member.tempPassword || member.password || 'metro2026';
+  const pass = member.tempPassword || member.password || generateCompliantTempPassword('Member');
 
   const params = new URLSearchParams({
     portal: 'member',
@@ -31,7 +32,7 @@ export function generateMemberInviteEmail(
 ): { subject: string; body: string } {
   const inviteUrl = generateMemberInviteUrl(member);
   const username = member.tempUsername || member.username;
-  const initialPassword = member.tempPassword || member.password || 'metro2026';
+  const initialPassword = member.tempPassword || member.password || generateCompliantTempPassword('Member');
   const creditLimit = member.creditAllocation ? `$${member.creditAllocation.toLocaleString()}` : '$10,000';
   const paymentTerms = member.paymentCycleDays ? `${member.paymentCycleDays} Days Net` : '14 Days Net';
   const businessAddress = member.businessAddress || member.storeLocation || 'Authorized Store Location';
@@ -123,7 +124,7 @@ export async function sendInvitationViaServer(
         token: member.id,
         businessName: member.businessAddress || member.storeLocation || member.name,
         username: member.tempUsername || member.username,
-        password: member.tempPassword || member.password || 'metro2026',
+        password: member.tempPassword || member.password || generateCompliantTempPassword('Member'),
         creditAllocation: member.creditAllocation,
         paymentCycleDays: member.paymentCycleDays,
       }),

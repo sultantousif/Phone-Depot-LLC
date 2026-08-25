@@ -86,7 +86,7 @@ app.post("/api/send-invitation", async (req, res) => {
     const adminNameToDisplay = senderName || "HG World Class Administration";
     const orgName = businessName ? ` for ${businessName}` : "";
     const memberUsername = username || to.split('@')[0];
-    const memberPassword = password || "metro2026";
+    const memberPassword = password || "Metro2026!";
     const creditDisplay = creditAllocation ? `$${Number(creditAllocation).toLocaleString()}` : "$10,000";
     const termsDisplay = paymentCycleDays ? `${paymentCycleDays} Days Net` : "14 Days Net";
 

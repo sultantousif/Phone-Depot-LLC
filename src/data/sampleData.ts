@@ -209,163 +209,17 @@ export const SAMPLE_PRODUCTS: ProductItem[] = [
 
 export const SAMPLE_ORDERS: OrderItem[] = [];
 
-export const INITIAL_MEMBERS: TeamMember[] = [
-  {
-    id: 'mem-101',
-    name: 'John Martinez',
-    email: 'john.martinez@metrowireless.com',
-    username: 'johnmartinez',
-    role: 'Store Manager',
-    storeLocation: 'Metro Wireless Store #104 - San Francisco, CA',
-    businessAddress: '1044 Market St, San Francisco, CA 94102',
-    businessAddressDetails: {
-      street: '1044 Market St',
-      city: 'San Francisco',
-      state: 'CA',
-      zip: '94102',
-      country: 'USA'
-    },
-    phone: '(415) 555-0142',
-    status: 'Active',
-    dateAdded: '2026-01-15',
-    permissions: ['place-order', 'view-invoices', 'make-payments', 'view-inventory'],
-    creditAllocation: 10000,
-    paymentCycleDays: 14,
-  },
-  {
-    id: 'mem-102',
-    name: 'Sarah Jenkins',
-    email: 'sarah.jenkins@primecellular.com',
-    username: 'sarahj',
-    role: 'Inventory Specialist',
-    storeLocation: 'Metro Prime Cellular Store #208 - San Jose, CA',
-    businessAddress: '742 Evergreen Terrace, San Jose, CA 95112',
-    businessAddressDetails: {
-      street: '742 Evergreen Terrace',
-      city: 'San Jose',
-      state: 'CA',
-      zip: '95112',
-      country: 'USA'
-    },
-    phone: '(408) 555-0198',
-    status: 'Active',
-    dateAdded: '2026-02-01',
-    permissions: ['place-order', 'view-inventory'],
-    creditAllocation: 10000,
-    paymentCycleDays: 14,
-  },
-  {
-    id: 'mem-103',
-    name: 'Michael Chang',
-    email: 'm.chang@bayareahub.com',
-    username: 'michaelc',
-    role: 'Store Manager',
-    storeLocation: 'Bay Area Mobile Hub - Oakland, CA',
-    businessAddress: '888 Broadway, Oakland, CA 94607',
-    businessAddressDetails: {
-      street: '888 Broadway',
-      city: 'Oakland',
-      state: 'CA',
-      zip: '94607',
-      country: 'USA'
-    },
-    phone: '(510) 555-0167',
-    status: 'Active',
-    dateAdded: '2026-02-18',
-    permissions: ['place-order', 'view-invoices', 'make-payments', 'view-inventory'],
-    creditAllocation: 10000,
-    paymentCycleDays: 13,
-  },
-  {
-    id: 'mem-104',
-    name: 'Elena Torres',
-    email: 'elena.torres@pacificdealer.com',
-    username: 'elenat',
-    role: 'Billing Administrator',
-    storeLocation: 'Pacific Dealer Network Store #402 - Santa Cruz, CA',
-    businessAddress: '1200 Pacific Ave, Santa Cruz, CA 95060',
-    businessAddressDetails: {
-      street: '1200 Pacific Ave',
-      city: 'Santa Cruz',
-      state: 'CA',
-      zip: '95060',
-      country: 'USA'
-    },
-    phone: '(831) 555-0133',
-    status: 'Active',
-    dateAdded: '2026-03-05',
-    permissions: ['place-order', 'view-invoices', 'make-payments'],
-    creditAllocation: 10000,
-    paymentCycleDays: 14,
-  }
-];
+export const INITIAL_MEMBERS: TeamMember[] = [];
 
-export const SAMPLE_INVOICES: InvoiceItem[] = [
-  {
-    invoiceNumber: 'INV-2026-8491',
-    orderNumber: 'REF-LP-2041',
-    title: 'Late Payment',
-    memberId: 'mem-101',
-    memberUsername: 'johnmartinez',
-    customerName: 'John Martinez (Metro Wireless Store #104)',
-    billedTo: 'John Martinez (Metro Wireless Store #104)',
-    date: '2026-08-01',
-    dueDate: '2026-08-16',
-    amount: 150.00,
-    status: 'Unpaid',
-    method: 'ACH Transfer',
-    notes: 'Late settlement fee assessed for overdue statement INV-2026-7201'
-  },
-  {
-    invoiceNumber: 'INV-2026-7910',
-    orderNumber: 'ORD-2026-3842',
-    title: 'Miscellenous',
-    memberId: 'mem-102',
-    memberUsername: 'sarahj',
-    customerName: 'Sarah Jenkins (Metro Prime Cellular Store #208)',
-    billedTo: 'Sarah Jenkins (Metro Prime Cellular Store #208)',
-    date: '2026-07-28',
-    dueDate: '2026-08-12',
-    amount: 425.50,
-    status: 'Paid',
-    method: 'Company Credit',
-    notes: 'Restocking and expedited warehouse courier freight fee'
-  },
-  {
-    invoiceNumber: 'INV-2026-6824',
-    orderNumber: 'REF-CB-9021',
-    title: 'Chargeback',
-    memberId: 'mem-103',
-    memberUsername: 'michaelc',
-    customerName: 'Michael Chang (Bay Area Mobile Hub)',
-    billedTo: 'Michael Chang (Bay Area Mobile Hub)',
-    date: '2026-07-20',
-    dueDate: '2026-08-04',
-    amount: 280.00,
-    status: 'Unpaid',
-    method: 'ACH Transfer',
-    notes: 'Dispute chargeback handling and administrative reversal fee'
-  }
-];
+export const SAMPLE_INVOICES: InvoiceItem[] = [];
 
-export const SAMPLE_PAYMENTS: PaymentItem[] = [
-  {
-    paymentId: 'PAY-2026-9104',
-    invoiceNumber: 'INV-2026-7910',
-    memberUsername: 'sarahj',
-    customerName: 'Sarah Jenkins',
-    date: '2026-07-30',
-    amount: 425.50,
-    method: 'Company Credit',
-    status: 'Completed'
-  }
-];
+export const SAMPLE_PAYMENTS: PaymentItem[] = [];
 
 export const INITIAL_ADMINS: AdminAccount[] = [
   {
     id: 'ADM-1001',
     name: 'Super Administrator',
-    email: 'admin@distroportal.com',
+    email: 'admin@hgwcwportal.com',
     username: 'admin',
     phone: '(800) 555-0199',
     adminLevel: 'Super Admin',
@@ -402,43 +256,10 @@ export const INITIAL_ADMINS: AdminAccount[] = [
       'Master Shop Settings'
     ],
     tempPassword: 'admin',
-    notes: 'Primary Administrator account linked with Google Sign-In.'
-  },
-  {
-    id: 'ADM-1002',
-    name: 'Operations Manager',
-    email: 'ops@distroportal.com',
-    username: 'ops_admin',
-    phone: '(800) 555-0142',
-    adminLevel: 'Operations Admin',
-    status: 'Active',
-    dateAdded: '2026-02-15',
-    permissions: [
-      'Approve & Modify Orders',
-      'Manage Product Catalog & Stock',
-      'Review Member Applications'
-    ],
-    tempPassword: 'admin',
-    notes: 'Handles order approvals, shipping calculations, and inventory allocations.'
-  },
-  {
-    id: 'ADM-1003',
-    name: 'Billing & Ledger Lead',
-    email: 'billing@distroportal.com',
-    username: 'billing_admin',
-    phone: '(800) 555-0178',
-    adminLevel: 'Billing Admin',
-    status: 'Active',
-    dateAdded: '2026-03-10',
-    permissions: [
-      'Issue Invoices & Debit/Credit Memos',
-      'Manage Members & Credit Limits',
-      'Record Payments & Ledger Statements'
-    ],
-    tempPassword: 'admin',
-    notes: 'Manages credit line approvals, invoice generation, payment receipts, and balance resets.'
+    notes: 'Super Administrator account.'
   }
 ];
+
 
 
 
