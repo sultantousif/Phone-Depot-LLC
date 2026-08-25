@@ -20,6 +20,8 @@ export type AdminView =
   | 'payments'
   | 'invoices-search'
   | 'payment-search'
+  | 'add-admin'
+  | 'manage-admins'
   | 'add-member'
   | 'manage-members'
   // My Orders
@@ -34,6 +36,23 @@ export type AdminView =
   | 'sim-cards'
   | 'accessories'
   | 'supplies';
+
+export interface AdminAccount {
+  id: string;
+  name: string;
+  email: string;
+  username: string;
+  phone?: string;
+  adminLevel: 'Super Admin' | 'Operations Admin' | 'Billing Admin' | 'Catalog Admin' | 'Support Admin';
+  role?: string;
+  status: 'Active' | 'Suspended';
+  dateAdded: string;
+  permissions: string[];
+  tempPassword?: string;
+  password?: string;
+  authMethod?: string;
+  notes?: string;
+}
 
 export type MemberView =
   | 'home'
@@ -61,6 +80,8 @@ export interface TeamMember {
   username: string;
   tempUsername?: string;
   tempPassword?: string;
+  password?: string;
+  authMethod?: string;
   isTempUsername?: boolean;
   isTempPassword?: boolean;
   tempPasswordExpire?: string;
@@ -82,6 +103,8 @@ export interface TeamMember {
   permissions: string[];
   creditAllocation: number;
   paymentCycleDays?: number;
+  invitationSentDate?: string;
+  invitationLink?: string;
 }
 
 export type ProductVisibilityMode = 'all' | 'hidden' | 'selected_members' | 'exclude_members';

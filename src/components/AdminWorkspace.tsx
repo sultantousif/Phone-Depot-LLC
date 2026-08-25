@@ -8,15 +8,18 @@ import {
   PaymentItem,
   InvoiceTitle,
   OrderStatus,
-  ProductItem
+  ProductItem,
+  AdminAccount
 } from '../types';
 import { 
   SAMPLE_PRODUCTS,
   SAMPLE_INVOICES,
   INITIAL_MEMBERS,
+  INITIAL_ADMINS,
   SAMPLE_PAYMENTS
 } from '../data/sampleData';
 import { ShopSettingsManager } from './ShopSettingsManager';
+import { AdminManagementView } from './AdminManagementView';
 import { loadStoredProducts, saveStoredProducts, PRODUCTS_UPDATED_EVENT } from '../utils/productUtils';
 import { 
   Search, 
@@ -93,13 +96,17 @@ import {
   subscribeToInvoices,
   subscribeToPayments,
   subscribeToMembers,
+  subscribeToAdmins,
   saveOrderToFirestore,
   saveInvoiceToFirestore,
   savePaymentToFirestore,
   saveMemberToFirestore,
-  deleteMemberFromFirestore
+  deleteMemberFromFirestore,
+  saveAdminToFirestore,
+  deleteAdminFromFirestore
 } from '../firebase/firestoreService';
 import { PaymentMethodOption } from '../types';
+import { MemberInvitationModal } from './MemberInvitationModal';
 
 const US_STATES = [
   { code: 'AL', name: 'Alabama' },
@@ -238,6 +245,74 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     localStorage.setItem('distro_team_members', JSON.stringify(members));
   }, [members]);
 
+  // Dynamic Admin Accounts State (persisted locally & synced with Firestore)
+  const [admins, setAdmins] = useState<AdminAccount[]>(() => {
+    try {
+      const saved = localStorage.getItem('distro_admin_accounts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return INITIAL_ADMINS;
+    } catch {
+      return INITIAL_ADMINS;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('distro_admin_accounts', JSON.stringify(admins));
+  }, [admins]);
+
+  const handleSaveAdmin = (adminToSave: AdminAccount) => {
+    setAdmins((prev) => {
+      const idx = prev.findIndex((a) => a.id === adminToSave.id);
+      let updated: AdminAccount[];
+      if (idx >= 0) {
+        updated = [...prev];
+        updated[idx] = adminToSave;
+      } else {
+        updated = [adminToSave, ...prev];
+      }
+      localStorage.setItem('distro_admin_accounts', JSON.stringify(updated));
+      return updated;
+    });
+
+    saveAdminToFirestore(adminToSave);
+    window.dispatchEvent(new Event('distro_storage_updated'));
+    window.dispatchEvent(new Event('storage'));
+  };
+
+  const handleDeleteAdmin = (adminId: string) => {
+    setAdmins((prev) => {
+      const updated = prev.filter((a) => a.id !== adminId);
+      localStorage.setItem('distro_admin_accounts', JSON.stringify(updated));
+      return updated;
+    });
+
+    deleteAdminFromFirestore(adminId);
+    window.dispatchEvent(new Event('distro_storage_updated'));
+    window.dispatchEvent(new Event('storage'));
+  };
+
+  const handleToggleAdminStatus = (adminId: string) => {
+    setAdmins((prev) => {
+      const updated = prev.map((a) => {
+        if (a.id === adminId) {
+          const newStatus: 'Active' | 'Suspended' = a.status === 'Active' ? 'Suspended' : 'Active';
+          const modified = { ...a, status: newStatus };
+          saveAdminToFirestore(modified);
+          return modified;
+        }
+        return a;
+      });
+      localStorage.setItem('distro_admin_accounts', JSON.stringify(updated));
+      return updated;
+    });
+
+    window.dispatchEvent(new Event('distro_storage_updated'));
+    window.dispatchEvent(new Event('storage'));
+  };
+
   // Create Invoice Modal & Form State
   const [isCreateInvoiceOpen, setIsCreateInvoiceOpen] = useState(false);
   const [invoiceBilledToMemberId, setInvoiceBilledToMemberId] = useState('');
@@ -338,6 +413,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
         if (savedPayments !== null) setPayments(JSON.parse(savedPayments));
         const savedMembers = localStorage.getItem('distro_team_members');
         if (savedMembers !== null) setMembers(JSON.parse(savedMembers));
+        const savedAdmins = localStorage.getItem('distro_admin_accounts');
+        if (savedAdmins !== null) setAdmins(JSON.parse(savedAdmins));
         const savedLimit = localStorage.getItem('distro_master_credit_limit');
         if (savedLimit !== null) setMasterCreditLimit(Number(savedLimit));
       } catch (err) {
@@ -402,6 +479,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     'View Invoices'
   ]);
   const [sendInviteEmail, setSendInviteEmail] = useState(true);
+  const [selectedInviteMember, setSelectedInviteMember] = useState<TeamMember | null>(null);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [memberFeedback, setMemberFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -513,6 +592,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       setMembers(newMems);
       localStorage.setItem('distro_team_members', JSON.stringify(newMems));
     });
+    const unsubAdmins = subscribeToAdmins((newAdms) => {
+      setAdmins(newAdms);
+      localStorage.setItem('distro_admin_accounts', JSON.stringify(newAdms));
+    });
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
@@ -523,6 +606,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       unsubInvoices();
       unsubPayments();
       unsubMembers();
+      unsubAdmins();
     };
   }, []);
 
@@ -1441,14 +1525,36 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       isTempUsername: allocateTempUsername,
       isTempPassword: allocateTempPassword,
       tempPasswordExpire: allocateTempPassword ? tempPasswordExpire : undefined,
-      mustResetPassword: allocateTempPassword ? requirePasswordReset : false
+      mustResetPassword: allocateTempPassword ? requirePasswordReset : false,
+      invitationSentDate: sendInviteEmail ? new Date().toISOString() : undefined,
     };
 
-    setMembers((prev) => [newMember, ...prev]);
+    const updatedMembers = [newMember, ...members];
+    setMembers(updatedMembers);
+
+    try {
+      localStorage.setItem('distro_team_members', JSON.stringify(updatedMembers));
+      window.dispatchEvent(new Event('distro_storage_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.warn('Storage sync error:', e);
+    }
+
+    // Persist to Cloud Firestore
+    saveMemberToFirestore(newMember).catch((err) => {
+      console.warn('Firestore member save error:', err);
+    });
+
     setMemberFeedback({
       type: 'success',
-      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}"${newMember.tempPassword ? ` | Temp Password: "${newMember.tempPassword}"` : ''} | Business Address: "${fullBusinessAddress}" with a ${memberCreditAllocation.toLocaleString()} credit allocation & ${memberPaymentCycleDays || 14}-day payment cycle.`
+      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}"${newMember.tempPassword ? ` | Temp Password: "${newMember.tempPassword}"` : ''} | Business Address: "${fullBusinessAddress}" with a $${memberCreditAllocation.toLocaleString()} credit allocation & ${memberPaymentCycleDays || 14}-day payment cycle.`
     });
+
+    // If "Send email invitation with secure setup link" was checked, immediately open invitation modal
+    if (sendInviteEmail) {
+      setSelectedInviteMember(newMember);
+      setInviteModalOpen(true);
+    }
 
     // Reset form
     setMemberName('');
@@ -1476,16 +1582,48 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }, 6000);
   };
 
-  const handleToggleMemberStatus = (id: string) => {
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id === id) {
-          const nextStatus = m.status === 'Active' ? 'Suspended' : 'Active';
-          return { ...m, status: nextStatus };
+  const handleMarkInviteSent = (memberId: string) => {
+    const now = new Date().toISOString();
+    setMembers((prev) => {
+      const next = prev.map((m) => {
+        if (m.id === memberId) {
+          const upd = { ...m, invitationSentDate: now };
+          saveMemberToFirestore(upd).catch(() => {});
+          return upd;
         }
         return m;
-      })
-    );
+      });
+      try {
+        localStorage.setItem('distro_team_members', JSON.stringify(next));
+        window.dispatchEvent(new Event('distro_storage_updated'));
+        window.dispatchEvent(new Event('storage'));
+      } catch (err) {
+        console.error(err);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleMemberStatus = (id: string) => {
+    setMembers((prev) => {
+      const next = prev.map((m) => {
+        if (m.id === id) {
+          const nextStatus = m.status === 'Active' ? 'Suspended' : 'Active';
+          const upd = { ...m, status: nextStatus as 'Active' | 'Suspended' };
+          saveMemberToFirestore(upd).catch(() => {});
+          return upd;
+        }
+        return m;
+      });
+      try {
+        localStorage.setItem('distro_team_members', JSON.stringify(next));
+        window.dispatchEvent(new Event('distro_storage_updated'));
+        window.dispatchEvent(new Event('storage'));
+      } catch (err) {
+        console.error(err);
+      }
+      return next;
+    });
   };
 
   const handleDeleteMember = (member: TeamMember) => {
@@ -1494,7 +1632,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   const confirmDeleteMember = (id: string) => {
     const target = members.find((m) => m.id === id);
-    setMembers((prev) => prev.filter((m) => m.id !== id));
+    const next = members.filter((m) => m.id !== id);
+    setMembers(next);
+    try {
+      localStorage.setItem('distro_team_members', JSON.stringify(next));
+      window.dispatchEvent(new Event('distro_storage_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {}
+    deleteMemberFromFirestore(id).catch((err) => console.warn('Firestore delete error:', err));
     setDeletingMember(null);
     setMemberFeedback({
       type: 'success',
@@ -1730,6 +1875,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
               </div>
               <div className="hidden sm:flex items-center space-x-2">
                 <button
+                  onClick={() => onNavigate('add-admin')}
+                  id="home-quick-add-admin-btn"
+                  className="px-3.5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs rounded-lg shadow-xs transition-all flex items-center gap-2"
+                >
+                  <Shield className="w-4 h-4" />
+                  <span>Add an Admin</span>
+                </button>
+                <button
                   onClick={() => onNavigate('manage-members')}
                   id="home-quick-manage-members-btn"
                   className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-lg transition-all flex items-center gap-2 border border-slate-200"
@@ -1841,6 +1994,36 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                 </div>
               </div>
 
+              {/* Add an Admin Quick Card */}
+              <div 
+                onClick={() => onNavigate('add-admin')}
+                id="home-card-add-admin"
+                className="bg-white border border-slate-200 hover:border-purple-500 rounded-xl p-5 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center space-x-4 group"
+              >
+                <div className="p-3 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-600 group-hover:text-white transition-colors border border-purple-100">
+                  <Shield className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors">Add an Admin</h3>
+                  <p className="text-xs text-slate-500">Provision administrator accounts</p>
+                </div>
+              </div>
+
+              {/* Manage Admins Quick Card */}
+              <div 
+                onClick={() => onNavigate('manage-admins')}
+                id="home-card-manage-admins"
+                className="bg-white border border-slate-200 hover:border-purple-500 rounded-xl p-5 shadow-xs hover:shadow-md transition-all cursor-pointer flex items-center space-x-4 group"
+              >
+                <div className="p-3 bg-purple-50 text-purple-600 rounded-xl group-hover:bg-purple-600 group-hover:text-white transition-colors border border-purple-100">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors">Manage Admins</h3>
+                  <p className="text-xs text-slate-500">Admin roster, roles & rights</p>
+                </div>
+              </div>
+
               {/* Add a Member Quick Card */}
               <div 
                 onClick={() => onNavigate('add-member')}
@@ -1939,6 +2122,21 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
             </div>
           </div>
         </div>
+      );
+
+    // Administrator Management Views
+    case 'add-admin':
+    case 'manage-admins':
+      return (
+        <AdminManagementView
+          user={user}
+          activeView={activeView}
+          admins={admins}
+          onSaveAdmin={handleSaveAdmin}
+          onDeleteAdmin={handleDeleteAdmin}
+          onToggleStatus={handleToggleAdminStatus}
+          onNavigate={onNavigate}
+        />
       );
 
     // My Account -> Add a member / Manage Members View
@@ -3229,13 +3427,24 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         </td>
                         <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                           <button
+                            onClick={() => {
+                              setSelectedInviteMember(m);
+                              setInviteModalOpen(true);
+                            }}
+                            className="px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 rounded transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            title="Send email invitation or copy secure setup link"
+                          >
+                            <Mail className="w-3 h-3" />
+                            <span>Invite</span>
+                          </button>
+                          <button
                             onClick={() => setEditingTermsMember({ 
                               id: m.id, 
                               name: m.name, 
                               credit: m.creditAllocation ?? 5000,
                               paymentCycleDays: m.paymentCycleDays ?? 14 
                             })}
-                            className="px-2 py-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 rounded transition-colors inline-flex items-center gap-1"
+                            className="px-2 py-1 text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 rounded transition-colors inline-flex items-center gap-1 cursor-pointer"
                             title="Adjust credit line & payment cycle"
                           >
                             <SlidersHorizontal className="w-3 h-3" />
@@ -7512,12 +7721,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
             {/* Header with Print & Close */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-6">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-xs">
-                  <Box className="w-5 h-5" />
-                </div>
+              <div className="flex items-center space-x-4">
+                <Logo width={187} height={127} />
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight">DistroAdmin Distribution</h3>
+                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight">HG World Class Wholesale</h3>
                   <p className="text-[11px] text-slate-500">Official Commercial Billing Statement</p>
                 </div>
               </div>
@@ -7690,7 +7897,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
             {/* Footer / Settlement info */}
             <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs text-slate-500">
-              <span>Payment Terms: Net 15 &bull; DistroAdmin Wholesale Network</span>
+              <span>Payment Terms: Net 15 &bull; HG World Class Wholesale Network</span>
               {viewingInvoice.status !== 'Paid' && (
                 <button
                   type="button"
@@ -7707,6 +7914,18 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
           </div>
         </div>
       )}
+
+      {/* Member Invitation and Setup Link Dispatcher Modal */}
+      <MemberInvitationModal
+        member={selectedInviteMember}
+        isOpen={inviteModalOpen}
+        onClose={() => {
+          setInviteModalOpen(false);
+          setSelectedInviteMember(null);
+        }}
+        senderAdminName={user.name || 'Tousif Sultan'}
+        onMarkSent={handleMarkInviteSent}
+      />
     </div>
   );
 };

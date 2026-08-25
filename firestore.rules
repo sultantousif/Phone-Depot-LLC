@@ -34,6 +34,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Admins collection: admin roster and credentials
+    match /admins/{adminId} {
+      allow read, write: if true;
+    }
+
     // Shop settings: configuration and thresholds
     match /shopSettings/{settingId} {
       allow read, write: if true;

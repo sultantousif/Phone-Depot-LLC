@@ -10,13 +10,14 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './config';
-import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember } from '../types';
+import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
 import { 
   SAMPLE_PRODUCTS, 
   SAMPLE_ORDERS, 
   SAMPLE_INVOICES, 
   SAMPLE_PAYMENTS, 
-  INITIAL_MEMBERS 
+  INITIAL_MEMBERS,
+  INITIAL_ADMINS
 } from '../data/sampleData';
 
 // Collection references
@@ -25,6 +26,7 @@ const ORDERS_COL = 'orders';
 const INVOICES_COL = 'invoices';
 const PAYMENTS_COL = 'payments';
 const MEMBERS_COL = 'members';
+const ADMINS_COL = 'admins';
 const SETTINGS_COL = 'shopSettings';
 
 // Initialize and seed Firestore if empty
@@ -81,6 +83,17 @@ export async function initializeFirestoreData() {
       INITIAL_MEMBERS.forEach((mem) => {
         const ref = doc(db, MEMBERS_COL, mem.id);
         batch.set(ref, mem);
+      });
+      await batch.commit();
+    }
+
+    const adminsSnap = await getDocs(collection(db, ADMINS_COL));
+    if (adminsSnap.empty && INITIAL_ADMINS.length > 0) {
+      console.log('Seeding initial Firestore admins...');
+      const batch = writeBatch(db);
+      INITIAL_ADMINS.forEach((adm) => {
+        const ref = doc(db, ADMINS_COL, adm.id);
+        batch.set(ref, adm);
       });
       await batch.commit();
     }
@@ -175,16 +188,135 @@ export function subscribeToMembers(callback: (members: TeamMember[]) => void) {
     (snapshot) => {
       const mems: TeamMember[] = [];
       snapshot.forEach((docSnap) => {
-        mems.push({ id: docSnap.id, ...docSnap.data() } as TeamMember);
+        const data = docSnap.data();
+        mems.push({
+          id: docSnap.id,
+          name: data.name || 'Member Store',
+          email: data.email || '',
+          username: data.username || data.tempUsername || docSnap.id.toLowerCase(),
+          tempUsername: data.tempUsername || data.username,
+          tempPassword: data.tempPassword || data.password || 'metro2026',
+          password: data.password || data.tempPassword,
+          authMethod: data.authMethod || 'password',
+          role: data.role || 'Store Manager',
+          storeLocation: data.storeLocation || 'Store Location',
+          businessAddress: data.businessAddress || '',
+          businessAddressDetails: data.businessAddressDetails,
+          phone: data.phone || '',
+          status: (data.status || 'Active') as 'Active' | 'Pending Activation' | 'Suspended',
+          dateAdded: data.dateAdded || new Date().toISOString().split('T')[0],
+          permissions: Array.isArray(data.permissions) ? data.permissions : ['place-order', 'view-invoices'],
+          creditAllocation: typeof data.creditAllocation === 'number' ? data.creditAllocation : 10000,
+          paymentCycleDays: typeof data.paymentCycleDays === 'number' ? data.paymentCycleDays : 14,
+        } as TeamMember);
       });
-      if (mems.length > 0) {
-        callback(mems);
-      }
+      callback(mems);
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, MEMBERS_COL);
     }
   );
+}
+
+export function subscribeToAdmins(callback: (admins: AdminAccount[]) => void) {
+  const colRef = collection(db, ADMINS_COL);
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const adms: AdminAccount[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        adms.push({
+          id: docSnap.id,
+          name: data.name || 'Administrator',
+          email: data.email || '',
+          username: data.username || docSnap.id.toLowerCase(),
+          phone: data.phone || '',
+          adminLevel: (data.adminLevel || data.role || 'Operations Admin') as AdminAccount['adminLevel'],
+          role: data.role || data.adminLevel || 'Operations Admin',
+          status: (data.status || 'Active') as 'Active' | 'Suspended',
+          dateAdded: data.dateAdded || data.createdAt || new Date().toISOString().split('T')[0],
+          permissions: Array.isArray(data.permissions) && data.permissions.length > 0
+            ? data.permissions
+            : ['Full Administrative Access', 'Approve & Modify Orders', 'Manage Product Catalog & Stock'],
+          tempPassword: data.tempPassword || data.password || 'admin',
+          password: data.password || data.tempPassword,
+          authMethod: data.authMethod || 'password',
+          notes: data.notes || '',
+        } as AdminAccount);
+      });
+      callback(adms);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, ADMINS_COL);
+    }
+  );
+}
+
+export async function fetchAdminsFromFirestore(): Promise<AdminAccount[]> {
+  try {
+    const snap = await getDocs(collection(db, ADMINS_COL));
+    const adms: AdminAccount[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      adms.push({
+        id: docSnap.id,
+        name: data.name || 'Administrator',
+        email: data.email || '',
+        username: data.username || docSnap.id.toLowerCase(),
+        phone: data.phone || '',
+        adminLevel: (data.adminLevel || data.role || 'Operations Admin') as AdminAccount['adminLevel'],
+        role: data.role || data.adminLevel || 'Operations Admin',
+        status: (data.status || 'Active') as 'Active' | 'Suspended',
+        dateAdded: data.dateAdded || data.createdAt || new Date().toISOString().split('T')[0],
+        permissions: Array.isArray(data.permissions) && data.permissions.length > 0
+          ? data.permissions
+          : ['Full Administrative Access', 'Approve & Modify Orders', 'Manage Product Catalog & Stock'],
+        tempPassword: data.tempPassword || data.password || 'admin',
+        password: data.password || data.tempPassword,
+        authMethod: data.authMethod || 'password',
+        notes: data.notes || '',
+      } as AdminAccount);
+    });
+    return adms;
+  } catch (err) {
+    console.error('Error fetching admins from Firestore:', err);
+    return [];
+  }
+}
+
+export async function fetchMembersFromFirestore(): Promise<TeamMember[]> {
+  try {
+    const snap = await getDocs(collection(db, MEMBERS_COL));
+    const mems: TeamMember[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      mems.push({
+        id: docSnap.id,
+        name: data.name || 'Member Store',
+        email: data.email || '',
+        username: data.username || data.tempUsername || docSnap.id.toLowerCase(),
+        tempUsername: data.tempUsername || data.username,
+        tempPassword: data.tempPassword || data.password || 'metro2026',
+        password: data.password || data.tempPassword,
+        authMethod: data.authMethod || 'password',
+        role: data.role || 'Store Manager',
+        storeLocation: data.storeLocation || 'Store Location',
+        businessAddress: data.businessAddress || '',
+        businessAddressDetails: data.businessAddressDetails,
+        phone: data.phone || '',
+        status: (data.status || 'Active') as 'Active' | 'Pending Activation' | 'Suspended',
+        dateAdded: data.dateAdded || new Date().toISOString().split('T')[0],
+        permissions: Array.isArray(data.permissions) ? data.permissions : ['place-order', 'view-invoices'],
+        creditAllocation: typeof data.creditAllocation === 'number' ? data.creditAllocation : 10000,
+        paymentCycleDays: typeof data.paymentCycleDays === 'number' ? data.paymentCycleDays : 14,
+      } as TeamMember);
+    });
+    return mems;
+  } catch (err) {
+    console.error('Error fetching members from Firestore:', err);
+    return [];
+  }
 }
 
 // ---------------- Firestore Mutations ----------------
@@ -265,3 +397,23 @@ export async function deleteMemberFromFirestore(memberId: string) {
     handleFirestoreError(error, OperationType.DELETE, `${MEMBERS_COL}/${memberId}`);
   }
 }
+
+// Admins
+export async function saveAdminToFirestore(admin: AdminAccount) {
+  try {
+    const ref = doc(db, ADMINS_COL, admin.id);
+    await setDoc(ref, admin, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${ADMINS_COL}/${admin.id}`);
+  }
+}
+
+export async function deleteAdminFromFirestore(adminId: string) {
+  try {
+    const ref = doc(db, ADMINS_COL, adminId);
+    await deleteDoc(ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `${ADMINS_COL}/${adminId}`);
+  }
+}
+

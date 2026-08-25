@@ -23,7 +23,9 @@ import {
   SlidersHorizontal,
   RotateCcw,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  Shield,
+  ShieldCheck
 } from 'lucide-react';
 import { AdminView, User } from '../types';
 
@@ -85,7 +87,7 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
     setOpenDropdown(openDropdown === dropdown ? null : dropdown);
   };
 
-  const isAccountActive = ['invoices', 'payments', 'invoices-search', 'payment-search', 'add-member', 'manage-members'].includes(activeView);
+  const isAccountActive = ['invoices', 'payments', 'invoices-search', 'payment-search', 'add-admin', 'manage-admins', 'add-member', 'manage-members'].includes(activeView);
   const isOrdersActive = ['place-new-order', 'view-previous-order', 'view-open-order', 'search-order'].includes(activeView);
   const isShoppingActive = ['shop-settings', 'metro-phones', 'display-phones', 'sim-cards', 'accessories', 'supplies'].includes(activeView);
 
@@ -97,24 +99,12 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           
-          {/* Left Brand Identity */}
+          {/* Left Navigation Anchor */}
           <div 
             id="brand-logo-btn"
-            className="flex items-center space-x-3 cursor-pointer group" 
+            className="flex items-center cursor-pointer" 
             onClick={() => handleSelect('home')}
-          >
-            <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold shadow-xs transition-transform group-hover:scale-105">
-              <Box className="w-5 h-5" />
-            </div>
-            <div>
-              <span className="text-base font-bold text-white tracking-tight block leading-none">
-                DistroAdmin
-              </span>
-              <span className="text-[10px] uppercase font-bold text-blue-400 tracking-wider">
-                Product Distribution
-              </span>
-            </div>
-          </div>
+          />
 
           {/* Desktop Navigation Items */}
           <nav className="hidden md:flex items-center space-x-1.5" aria-label="Main Navigation">
@@ -204,10 +194,48 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
                     <span>Payment Search</span>
                   </button>
 
-                  {/* Admin Only Privileges: Add a member & Manage members */}
+                  {/* Admin Only Privileges: Add an Admin, Manage Admins, Add a member, Manage members */}
                   {user.role === 'admin' && (
                     <>
                       <div className="my-1 border-t border-slate-100" />
+
+                      {/* Requested Button: "Add an Admin" under My Account */}
+                      <button
+                        onClick={() => handleSelect('add-admin')}
+                        id="menu-item-add-admin"
+                        className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 transition-colors ${
+                          activeView === 'add-admin'
+                            ? 'text-purple-700 font-bold bg-purple-50'
+                            : 'text-slate-800 hover:bg-purple-50 hover:text-purple-700'
+                        }`}
+                      >
+                        <div className="p-1 rounded bg-purple-100 text-purple-700">
+                          <Shield className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="block leading-tight font-bold">Add an Admin</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Administrator privileges</span>
+                        </div>
+                      </button>
+
+                      {/* Requested Button: "Manage Admins" */}
+                      <button
+                        onClick={() => handleSelect('manage-admins')}
+                        id="menu-item-manage-admins"
+                        className={`w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center space-x-2.5 transition-colors ${
+                          activeView === 'manage-admins'
+                            ? 'text-purple-700 font-bold bg-purple-50'
+                            : 'text-slate-800 hover:bg-purple-50 hover:text-purple-700'
+                        }`}
+                      >
+                        <div className="p-1 rounded bg-purple-100 text-purple-700">
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="block leading-tight font-bold">Manage Admins</span>
+                          <span className="text-[10px] text-slate-400 font-normal">Admin roster & roles</span>
+                        </div>
+                      </button>
 
                       {/* Requested Button: "Add a member" under My Account */}
                       <button
@@ -512,9 +540,33 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               <button onClick={() => handleSelect('invoices-search')} className="w-full text-left pl-6 py-1.5 text-xs text-slate-300 hover:text-white">Invoices Search</button>
               <button onClick={() => handleSelect('payment-search')} className="w-full text-left pl-6 py-1.5 text-xs text-slate-300 hover:text-white">Payment Search</button>
               
-              {/* Admin Only Privileges in Mobile: Add a member & Manage members */}
+              {/* Admin Only Privileges in Mobile: Add an Admin, Manage Admins, Add a member, Manage members */}
               {user.role === 'admin' && (
                 <>
+                  {/* Requested Mobile Add Admin Button */}
+                  <button 
+                    id="mobile-menu-item-add-admin"
+                    onClick={() => handleSelect('add-admin')} 
+                    className={`w-full text-left pl-6 py-1.5 text-xs font-bold flex items-center gap-2 ${
+                      activeView === 'add-admin' ? 'text-purple-400 font-extrabold' : 'text-purple-400 hover:text-purple-300'
+                    }`}
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Add an Admin</span>
+                  </button>
+
+                  {/* Requested Mobile Manage Admins Button */}
+                  <button 
+                    id="mobile-menu-item-manage-admins"
+                    onClick={() => handleSelect('manage-admins')} 
+                    className={`w-full text-left pl-6 py-1.5 text-xs font-bold flex items-center gap-2 ${
+                      activeView === 'manage-admins' ? 'text-purple-400 font-extrabold' : 'text-purple-400 hover:text-purple-300'
+                    }`}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Manage Admins</span>
+                  </button>
+
                   {/* Requested Mobile Add Member Button */}
                   <button 
                     id="mobile-menu-item-add-member"

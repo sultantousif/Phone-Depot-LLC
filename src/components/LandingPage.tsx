@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, UserCheck, ArrowRight, Box } from 'lucide-react';
+import { Shield, UserCheck, ArrowRight } from 'lucide-react';
 
 interface LandingPageProps {
   onOpenLogin: (role: 'admin' | 'member') => void;
@@ -11,19 +11,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
       {/* Top Brand Header */}
       <header className="w-full bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="h-0.5 w-full bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600" />
-        <div className="max-w-7xl mx-auto py-4 px-6 md:px-12 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-xs">
-              <Box className="w-5 h-5" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-white leading-tight tracking-tight">
-                DistroAdmin Portal
-              </h1>
-              <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Product Distribution & Logistics</p>
-            </div>
-          </div>
-          <div className="hidden sm:block text-xs font-semibold text-slate-400">
+        <div className="max-w-7xl mx-auto py-4 px-6 md:px-12 flex items-center justify-end">
+          <div className="text-xs font-semibold text-slate-400">
             Secure Authorized Access
           </div>
         </div>

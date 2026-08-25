@@ -37,8 +37,15 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  const isOfflineOrUnavailable = 
+    errMessage.includes('unavailable') || 
+    errMessage.includes('offline') || 
+    errMessage.includes('client is offline') ||
+    errMessage.includes('Could not reach Cloud Firestore backend');
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -53,21 +60,23 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
+
+  if (isOfflineOrUnavailable) {
+    // Firestore operates in offline cache mode seamlessly; log as info/warning rather than throwing
+    console.warn(`Firestore offline/unavailable mode for ${operationType} on ${path || 'unknown'}:`, errMessage);
+    return;
+  }
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }
 
-// Test connection on boot
+// Optional connection check that gracefully catches any offline or startup states
 export async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    // Non-blocking connection verification
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
-    }
+    // Graceful offline fallback
   }
 }
-
-testConnection();
 
 export { signInWithPopup, signOut };

@@ -16,6 +16,7 @@ import {
   isProductVisibleToMember, 
   PRODUCTS_UPDATED_EVENT 
 } from '../utils/productUtils';
+import { Logo } from './Logo';
 import { 
   Home as HomeIcon,
   ShoppingBag,
@@ -1850,8 +1851,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                                 downloadInvoicePdf({ 
                                   invoice: inv, 
                                   order: matchingOrder,
-                                  companyName: 'DistroAdmin Wholesale Distribution',
-                                  companyContact: 'billing@distroadmin.com | +1 (800) 555-0199',
+                                  companyName: 'HG World Class Wholesale Distribution',
+                                  companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199',
                                   creditAllocation: creditInfo.creditAllocation,
                                   remainingCreditBalance: creditInfo.remainingBalance
                                 });
@@ -2112,8 +2113,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                               downloadInvoicePdf({ 
                                 invoice: inv, 
                                 order: matchingOrder,
-                                companyName: 'DistroAdmin Wholesale Distribution',
-                                companyContact: 'billing@distroadmin.com | +1 (800) 555-0199',
+                                companyName: 'HG World Class Wholesale Distribution',
+                                companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199',
                                 creditAllocation: creditInfo.creditAllocation,
                                 remainingCreditBalance: creditInfo.remainingBalance
                               });
@@ -2306,8 +2307,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     downloadInvoicePdf({ 
                       invoice: inv, 
                       order: reviewingOrder,
-                      companyName: 'DistroAdmin Wholesale Distribution',
-                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                      companyName: 'HG World Class Wholesale Distribution',
+                      companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199'
                     });
                   }}
                   className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -2587,8 +2588,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     downloadInvoicePdf({ 
                       invoice: inv, 
                       order: reviewingOrder,
-                      companyName: 'DistroAdmin Wholesale Distribution',
-                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                      companyName: 'HG World Class Wholesale Distribution',
+                      companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199'
                     });
                   }}
                   className="px-4 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold rounded-xl transition-colors cursor-pointer inline-flex items-center gap-2 shadow-2xs"
@@ -2621,12 +2622,10 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
             {/* Header with Print & Close */}
             <div className="flex items-center justify-between pb-4 border-b border-slate-200 mb-6">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-emerald-600 rounded-xl flex items-center justify-center text-white font-bold shadow-xs">
-                  <Box className="w-5 h-5" />
-                </div>
+              <div className="flex items-center space-x-4">
+                <Logo width={187} height={127} />
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight">DistroAdmin Wholesale</h3>
+                  <h3 className="text-base font-extrabold text-slate-900 tracking-tight">HG World Class Wholesale</h3>
                   <p className="text-[11px] text-slate-500">Official Commercial Billing Statement</p>
                 </div>
               </div>
@@ -2640,8 +2639,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     downloadInvoicePdf({ 
                       invoice: viewingMemberInvoice, 
                       order: matchingOrder,
-                      companyName: 'DistroAdmin Wholesale Distribution',
-                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                      companyName: 'HG World Class Wholesale Distribution',
+                      companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199'
                     });
                   }}
                   className="px-3.5 py-1.5 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors flex items-center gap-1.5 border border-slate-300 cursor-pointer shadow-2xs"
@@ -2683,10 +2682,10 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs mb-4">
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Issued By</span>
-                <p className="font-bold text-slate-900">DistroAdmin Distribution Inc.</p>
+                <p className="font-bold text-slate-900">HG World Class Distribution Inc.</p>
                 <p className="text-slate-600">450 Mission Street, Suite 800</p>
                 <p className="text-slate-600">San Francisco, CA 94105</p>
-                <p className="text-slate-500 mt-1">billing@distroadmin.com</p>
+                <p className="text-slate-500 mt-1">billing@hgworldclass.com</p>
               </div>
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Billed To (Retail Member)</span>
@@ -2935,8 +2934,8 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
                     downloadInvoicePdf({ 
                       invoice: viewingMemberInvoice, 
                       order: matchingOrder,
-                      companyName: 'DistroAdmin Wholesale Distribution',
-                      companyContact: 'billing@distroadmin.com | +1 (800) 555-0199'
+                      companyName: 'HG World Class Wholesale Distribution',
+                      companyContact: 'billing@hgworldclass.com | +1 (800) 555-0199'
                     });
                   }}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"

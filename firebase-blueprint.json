@@ -108,6 +108,26 @@
       },
       "required": ["id", "name", "email", "username", "role", "status", "creditAllocation"]
     },
+    "Admin": {
+      "title": "Admin",
+      "description": "An administrative account with portal management privileges",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "username": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string" },
+        "adminLevel": { "type": "string" },
+        "status": { "type": "string" },
+        "dateAdded": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "tempPassword": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "username", "role", "status"]
+    },
     "ShopSetting": {
       "title": "ShopSetting",
       "description": "Global store and distribution configuration",
@@ -142,6 +162,10 @@
     "/members/{memberId}": {
       "schema": { "$ref": "#/entities/Member" },
       "description": "Team member profiles and permissions"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/Admin" },
+      "description": "Administrative accounts and privilege configuration"
     },
     "/shopSettings/{settingId}": {
       "schema": { "$ref": "#/entities/ShopSetting" },

@@ -18,6 +18,21 @@ export default function App() {
   // Initialize Firestore collections on app launch
   useEffect(() => {
     initializeFirestoreData();
+
+    // Auto-detect invitation link from URL parameters
+    try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const portal = searchParams.get('portal');
+      const invite = searchParams.get('invite');
+      const user = searchParams.get('user');
+
+      if (portal === 'member' || invite || user) {
+        setLoginModalRole('member');
+        setLoginModalOpen(true);
+      }
+    } catch (e) {
+      console.warn('URL param detection error:', e);
+    }
   }, []);
 
   const handleOpenLoginModal = (role: 'admin' | 'member') => {

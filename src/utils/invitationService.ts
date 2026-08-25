@@ -1,0 +1,127 @@
+import { TeamMember } from '../types';
+
+/**
+ * Generates a direct invitation setup URL for a member.
+ */
+export function generateMemberInviteUrl(member: TeamMember): string {
+  const origin = window.location.origin;
+  const pathname = window.location.pathname;
+  const username = member.tempUsername || member.username || '';
+  const email = member.email || '';
+  const inviteCode = member.id || '';
+  const pass = member.tempPassword || member.password || 'metro2026';
+
+  const params = new URLSearchParams({
+    portal: 'member',
+    user: username,
+    email: email,
+    invite: inviteCode,
+    preset: pass
+  });
+
+  return `${origin}${pathname}?${params.toString()}`;
+}
+
+/**
+ * Generates a complete email subject and body for inviting a store member.
+ */
+export function generateMemberInviteEmail(
+  member: TeamMember,
+  senderName: string = 'Portal Administrator'
+): { subject: string; body: string } {
+  const inviteUrl = generateMemberInviteUrl(member);
+  const username = member.tempUsername || member.username;
+  const initialPassword = member.tempPassword || member.password || 'metro2026';
+  const creditLimit = member.creditAllocation ? `$${member.creditAllocation.toLocaleString()}` : '$10,000';
+  const paymentTerms = member.paymentCycleDays ? `${member.paymentCycleDays} Days Net` : '14 Days Net';
+  const businessAddress = member.businessAddress || member.storeLocation || 'Authorized Store Location';
+
+  const subject = `Welcome to the Wholesale Portal - Account Invitation for ${member.name}`;
+
+  const body = `Dear ${member.name},
+
+You have been invited by ${senderName} to access the Wholesale Product Distribution Portal.
+
+Below are your authorized store access credentials:
+--------------------------------------------------
+• Store Account Name: ${member.name}
+• Assigned Role: ${member.role || 'Store Manager'}
+• Portal Username: ${username}
+• Initial / Temp Password: ${initialPassword}
+• Purchasing Credit Line: ${creditLimit}
+• Payment Terms: ${paymentTerms}
+• Business Address: ${businessAddress}
+• Contact Phone: ${member.phone || 'N/A'}
+--------------------------------------------------
+
+Direct Portal Access & Activation Link:
+${inviteUrl}
+
+Next Steps:
+1. Click the secure setup link above (or navigate to the portal login page).
+2. Enter your username (${username}) and initial password (${initialPassword}).
+3. Review your wholesale product catalog, place orders, and manage invoices.
+
+If you have any questions or require assistance with your account, please reply directly to this email.
+
+Best regards,
+${senderName}
+Wholesale Distribution Team
+`;
+
+  return { subject, body };
+}
+
+/**
+ * Triggers the user's default email client (mailto:) with subject and body populated.
+ */
+export function triggerMailtoInvite(
+  member: TeamMember,
+  senderName: string = 'Portal Administrator'
+): boolean {
+  try {
+    const { subject, body } = generateMemberInviteEmail(member, senderName);
+    const recipient = member.email || '';
+    const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    
+    // Open in new window or assign to location
+    const link = document.createElement('a');
+    link.href = mailtoUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return true;
+  } catch (err) {
+    console.error('Failed to launch mailto client:', err);
+    return false;
+  }
+}
+
+/**
+ * Copies text to clipboard safely with fallback.
+ */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } else {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      return successful;
+    }
+  } catch (err) {
+    console.error('Clipboard copy error:', err);
+    return false;
+  }
+}

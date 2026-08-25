@@ -1,4 +1,4 @@
-import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember } from '../types';
+import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
 
 export const SAMPLE_PRODUCTS: ProductItem[] = [
   // Metro By T-Mobile Phones
@@ -360,5 +360,85 @@ export const SAMPLE_PAYMENTS: PaymentItem[] = [
     status: 'Completed'
   }
 ];
+
+export const INITIAL_ADMINS: AdminAccount[] = [
+  {
+    id: 'ADM-1001',
+    name: 'Super Administrator',
+    email: 'admin@distroportal.com',
+    username: 'admin',
+    phone: '(800) 555-0199',
+    adminLevel: 'Super Admin',
+    status: 'Active',
+    dateAdded: '2026-01-01',
+    permissions: [
+      'Full Administrative Access',
+      'Manage Members & Credit Limits',
+      'Approve & Modify Orders',
+      'Issue Invoices & Debit/Credit Memos',
+      'Manage Product Catalog & Stock',
+      'Add & Manage Admin Accounts',
+      'Master Shop Settings'
+    ],
+    tempPassword: 'admin',
+    notes: 'Primary Master System Administrator with unrestricted access.'
+  },
+  {
+    id: 'ADM-1004',
+    name: 'Tousif Sultan',
+    email: 'sultantousif@gmail.com',
+    username: 'stousif',
+    phone: '(800) 555-0199',
+    adminLevel: 'Super Admin',
+    status: 'Active',
+    dateAdded: '2026-01-01',
+    permissions: [
+      'Full Administrative Access',
+      'Manage Members & Credit Limits',
+      'Approve & Modify Orders',
+      'Issue Invoices & Debit/Credit Memos',
+      'Manage Product Catalog & Stock',
+      'Add & Manage Admin Accounts',
+      'Master Shop Settings'
+    ],
+    tempPassword: 'admin',
+    notes: 'Primary Administrator account linked with Google Sign-In.'
+  },
+  {
+    id: 'ADM-1002',
+    name: 'Operations Manager',
+    email: 'ops@distroportal.com',
+    username: 'ops_admin',
+    phone: '(800) 555-0142',
+    adminLevel: 'Operations Admin',
+    status: 'Active',
+    dateAdded: '2026-02-15',
+    permissions: [
+      'Approve & Modify Orders',
+      'Manage Product Catalog & Stock',
+      'Review Member Applications'
+    ],
+    tempPassword: 'admin',
+    notes: 'Handles order approvals, shipping calculations, and inventory allocations.'
+  },
+  {
+    id: 'ADM-1003',
+    name: 'Billing & Ledger Lead',
+    email: 'billing@distroportal.com',
+    username: 'billing_admin',
+    phone: '(800) 555-0178',
+    adminLevel: 'Billing Admin',
+    status: 'Active',
+    dateAdded: '2026-03-10',
+    permissions: [
+      'Issue Invoices & Debit/Credit Memos',
+      'Manage Members & Credit Limits',
+      'Record Payments & Ledger Statements'
+    ],
+    tempPassword: 'admin',
+    notes: 'Manages credit line approvals, invoice generation, payment receipts, and balance resets.'
+  }
+];
+
 
 
