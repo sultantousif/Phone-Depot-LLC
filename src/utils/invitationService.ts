@@ -100,6 +100,47 @@ export function triggerMailtoInvite(
 }
 
 /**
+ * Dispatches the invitation email directly via the backend Microsoft 365 / GoDaddy SMTP server.
+ */
+export async function sendInvitationViaServer(
+  member: TeamMember,
+  senderName: string = 'HG World Class Administration',
+  customMessage?: string
+): Promise<{ success: boolean; message: string; dispatched?: boolean }> {
+  try {
+    const inviteUrl = generateMemberInviteUrl(member);
+    const response = await fetch('/api/send-invitation', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        to: member.email,
+        recipientName: member.name,
+        invitationLink: inviteUrl,
+        senderName,
+        customMessage,
+        token: member.id,
+        businessName: member.businessAddress || member.storeLocation || member.name,
+        username: member.tempUsername || member.username,
+        password: member.tempPassword || member.password || 'metro2026',
+        creditAllocation: member.creditAllocation,
+        paymentCycleDays: member.paymentCycleDays,
+      }),
+    });
+
+    const data = await response.json();
+    return data;
+  } catch (error: any) {
+    console.error('Error dispatching invitation via server:', error);
+    return {
+      success: false,
+      message: error?.message || 'Network error attempting to contact email dispatch service.',
+    };
+  }
+}
+
+/**
  * Copies text to clipboard safely with fallback.
  */
 export async function copyTextToClipboard(text: string): Promise<boolean> {
@@ -125,3 +166,4 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
     return false;
   }
 }
+

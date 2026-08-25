@@ -4,6 +4,7 @@ import {
   generateMemberInviteUrl, 
   generateMemberInviteEmail, 
   triggerMailtoInvite, 
+  sendInvitationViaServer,
   copyTextToClipboard 
 } from '../utils/invitationService';
 import { 
@@ -19,7 +20,8 @@ import {
   Store, 
   Clock, 
   Check, 
-  FileText
+  FileText,
+  AlertCircle
 } from 'lucide-react';
 
 interface MemberInvitationModalProps {
@@ -39,8 +41,8 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
-  const [isSimulatedDispatching, setIsSimulatedDispatching] = useState(false);
-  const [dispatchStatus, setDispatchStatus] = useState<string | null>(null);
+  const [isDispatching, setIsDispatching] = useState(false);
+  const [dispatchStatus, setDispatchStatus] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
   const [activeTab, setActiveTab] = useState<'quick' | 'preview'>('quick');
 
   if (!isOpen || !member) return null;
@@ -68,19 +70,39 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
   const handleOpenEmailClient = () => {
     triggerMailtoInvite(member, senderAdminName);
     if (onMarkSent) onMarkSent(member.id);
-    setDispatchStatus('Mail client opened! Email draft created with member invitation details.');
-    setTimeout(() => setDispatchStatus(null), 4000);
+    setDispatchStatus({
+      text: 'Mail client opened! Email draft created with member invitation details.',
+      type: 'info',
+    });
+    setTimeout(() => setDispatchStatus(null), 5000);
   };
 
-  const handleSimulateServerDispatch = () => {
-    setIsSimulatedDispatching(true);
+  const handleDispatchEmail = async () => {
+    setIsDispatching(true);
     setDispatchStatus(null);
-    setTimeout(() => {
-      setIsSimulatedDispatching(false);
-      setDispatchStatus(`✓ Invitation link successfully dispatched to ${member.email} at ${new Date().toLocaleTimeString()}!`);
-      if (onMarkSent) onMarkSent(member.id);
-      setTimeout(() => setDispatchStatus(null), 5000);
-    }, 900);
+    try {
+      const res = await sendInvitationViaServer(member, senderAdminName);
+      setIsDispatching(false);
+      if (res.success) {
+        if (onMarkSent) onMarkSent(member.id);
+        setDispatchStatus({
+          text: `✓ Invitation dispatched to ${member.email} from admin@hgwcwportal.com!`,
+          type: 'success',
+        });
+      } else {
+        setDispatchStatus({
+          text: res.message || 'Failed to dispatch email.',
+          type: 'error',
+        });
+      }
+    } catch (err: any) {
+      setIsDispatching(false);
+      setDispatchStatus({
+        text: err?.message || 'Failed to send invitation.',
+        type: 'error',
+      });
+    }
+    setTimeout(() => setDispatchStatus(null), 6000);
   };
 
   return (
@@ -180,9 +202,21 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
 
           {/* Feedback Status Alert */}
           {dispatchStatus && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold flex items-center gap-2 animate-in fade-in duration-150">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{dispatchStatus}</span>
+            <div className={`p-3.5 rounded-xl text-xs font-semibold flex items-center gap-2.5 animate-in fade-in duration-150 border ${
+              dispatchStatus.type === 'success' 
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-900' 
+                : dispatchStatus.type === 'error'
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : 'bg-blue-50 border-blue-200 text-blue-900'
+            }`}>
+              {dispatchStatus.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : dispatchStatus.type === 'error' ? (
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              ) : (
+                <Mail className="w-4 h-4 text-blue-600 shrink-0" />
+              )}
+              <span>{dispatchStatus.text}</span>
             </div>
           )}
 
@@ -267,19 +301,19 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
                 </button>
               </div>
 
-              {/* Instant Dispatch / Simulated SMTP Option */}
+              {/* Instant Dispatch via GoDaddy / Microsoft 365 */}
               <div className="bg-slate-900 text-white rounded-xl p-4 border border-slate-800 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-2 text-blue-400">
                     <Send className="w-4 h-4" />
-                    <span className="text-xs font-bold uppercase tracking-wider">Instant Portal Email Dispatch</span>
+                    <span className="text-xs font-bold uppercase tracking-wider">Automated Email Dispatch</span>
                   </div>
-                  <span className="text-[10px] bg-blue-500/20 text-blue-300 font-semibold px-2 py-0.5 rounded border border-blue-400/30">
-                    Server Service
+                  <span className="text-[10px] bg-blue-500/20 text-blue-300 font-semibold px-2 py-0.5 rounded border border-blue-400/30 font-mono">
+                    admin@hgwcwportal.com
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Triggers an automated onboarding notification and marks the member account as having an active invitation code on record.
+                  Sends an official onboarding invitation and single-use setup credentials directly to the member from your connected domain email.
                 </p>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[11px] text-slate-400 font-mono">
@@ -288,16 +322,16 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
                   <button
                     type="button"
                     id="simulate-dispatch-btn"
-                    onClick={handleSimulateServerDispatch}
-                    disabled={isSimulatedDispatching}
+                    onClick={handleDispatchEmail}
+                    disabled={isDispatching}
                     className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                   >
-                    {isSimulatedDispatching ? (
+                    {isDispatching ? (
                       <span className="inline-block animate-spin">⟳</span>
                     ) : (
                       <Send className="w-3.5 h-3.5" />
                     )}
-                    <span>{isSimulatedDispatching ? 'Dispatching...' : 'Dispatch Invitation Now'}</span>
+                    <span>{isDispatching ? 'Sending Email...' : 'Send from admin@hgwcwportal.com'}</span>
                   </button>
                 </div>
               </div>
@@ -325,7 +359,7 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
             <div className="space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 font-sans text-xs">
                 <div className="border-b border-slate-200 pb-2 space-y-1 text-slate-600">
-                  <div><strong>From:</strong> Wholesale Portal &lt;noreply@distroportal.com&gt;</div>
+                  <div><strong>From:</strong> HG World Class Wholesale &lt;admin@hgwcwportal.com&gt;</div>
                   <div><strong>To:</strong> {member.name} &lt;{member.email}&gt;</div>
                   <div><strong>Subject:</strong> <span className="text-slate-900 font-semibold">{subject}</span></div>
                 </div>
