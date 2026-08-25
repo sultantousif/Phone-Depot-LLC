@@ -11,7 +11,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
       {/* Top Brand Header */}
       <header className="w-full bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="h-0.5 w-full bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600" />
-        <div className="max-w-7xl mx-auto py-3 px-6 md:px-12 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto py-3 px-6 md:px-12 flex items-center justify-start">
           <div className="flex items-center">
             <img
               src="/logo.png"
@@ -20,9 +20,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
               className="object-contain select-none"
               style={{ width: '187px', height: '127px' }}
             />
-          </div>
-          <div className="text-xs font-semibold text-slate-400">
-            Secure Authorized Access
           </div>
         </div>
       </header>
@@ -91,7 +88,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
 
       {/* Clean Footer */}
       <footer className="w-full border-t border-slate-200 py-4 px-6 text-center text-xs text-slate-500 bg-white">
-        Product Distribution Portal &copy; {new Date().getFullYear()} &bull; Secure Authorized Access Only
+        Powered by Hassle Free Services
       </footer>
     </div>
   );
