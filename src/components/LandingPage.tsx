@@ -1,25 +1,81 @@
-import React from 'react';
-import { Shield, UserCheck, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, UserCheck, ArrowRight, Building2 } from 'lucide-react';
+import defaultLogo from '../assets/images/hg_world_class_logo_1787688685104.jpg';
 
 interface LandingPageProps {
   onOpenLogin: (role: 'admin' | 'member') => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onOpenLogin }) => {
+  const [logoSrc, setLogoSrc] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('distro_store_logo');
+      if (saved) return saved;
+    }
+    return defaultLogo;
+  });
+  const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    const handleStorage = () => {
+      const saved = localStorage.getItem('distro_store_logo');
+      if (saved) {
+        setLogoSrc(saved);
+        setImgError(false);
+      } else {
+        setLogoSrc(defaultLogo);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('distro_storage_updated', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('distro_storage_updated', handleStorage);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col justify-between font-sans text-slate-800">
       {/* Top Brand Header */}
       <header className="w-full bg-slate-900 border-b border-slate-800 shadow-md">
         <div className="h-0.5 w-full bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600" />
-        <div className="max-w-7xl mx-auto py-3 px-6 md:px-12 flex items-center justify-start">
-          <div className="flex items-center">
-            <img
-              src="/logo.png"
-              alt="HG WORLD CLASS"
-              referrerPolicy="no-referrer"
-              className="object-contain select-none"
-              style={{ width: '187px', height: '127px' }}
-            />
+        <div className="max-w-7xl mx-auto py-3.5 px-6 md:px-12 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {!imgError ? (
+              <img
+                src={logoSrc}
+                alt="HG WORLD CLASS"
+                referrerPolicy="no-referrer"
+                onError={() => {
+                  if (logoSrc !== defaultLogo) {
+                    setLogoSrc(defaultLogo);
+                  } else {
+                    setImgError(true);
+                  }
+                }}
+                className="h-12 md:h-14 w-auto max-w-[260px] object-contain rounded-md select-none bg-white/5 p-1 border border-white/10"
+              />
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white font-black text-lg shadow-md border border-white/20 font-display">
+                  <span>H</span>
+                  <span className="text-amber-400">G</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-base md:text-lg font-black tracking-tight text-white font-display leading-tight">
+                    HG WORLD CLASS
+                  </span>
+                  <span className="text-[10px] uppercase font-bold tracking-widest text-blue-400">
+                    Wholesale B2B Portal
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400">
+            <Building2 className="w-4 h-4 text-blue-400" />
+            <span>Authorized B2B Distribution Portal</span>
           </div>
         </div>
       </header>
