@@ -12,7 +12,6 @@ import {
   AdminAccount
 } from '../types';
 import { 
-  SAMPLE_PRODUCTS,
   INITIAL_ADMINS
 } from '../data/sampleData';
 import { ShopSettingsManager } from './ShopSettingsManager';
@@ -96,6 +95,8 @@ import {
   subscribeToMembers,
   subscribeToAdmins,
   saveOrderToFirestore,
+  fetchMemberOrdersFromFirestore,
+  fetchAllOrdersFromFirestore,
   saveInvoiceToFirestore,
   savePaymentToFirestore,
   saveMemberToFirestore,
@@ -390,27 +391,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   });
   const [masterLimitFeedback, setMasterLimitFeedback] = useState<{ type: 'success' | 'info'; message: string } | null>(null);
 
-  // Testing Reset Feature: Reset Payments & Invoices to zero ($0)
-  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
-  const [resetSuccessMessage, setResetSuccessMessage] = useState('');
-
-  const handleResetPaymentsAndInvoices = () => {
-    localStorage.setItem('distro_invoices', JSON.stringify([]));
-    localStorage.setItem('distro_payments', JSON.stringify([]));
-    setInvoices([]);
-    setPayments([]);
-    setIsResetConfirmOpen(false);
-    setResetSuccessMessage('All payments and invoices have been successfully reset to zero ($0.00). Credit allocations are now fully restored.');
-
-    // Broadcast update across components & member workspaces
-    window.dispatchEvent(new Event('distro_storage_updated'));
-    window.dispatchEvent(new Event('storage'));
-
-    setTimeout(() => {
-      setResetSuccessMessage('');
-    }, 6000);
-  };
-
   // Listen for storage updates
   useEffect(() => {
     const handleStorageUpdated = () => {
@@ -608,6 +588,25 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       unsubAdmins();
     };
   }, []);
+
+  // Fetch orders from Firestore for the selected member when viewing or switching members/views
+  useEffect(() => {
+    if (selectedMemberId) {
+      fetchMemberOrdersFromFirestore(selectedMemberId)
+        .then((memberOrders) => {
+          if (memberOrders && memberOrders.length > 0) {
+            setOrders((prev) => {
+              const map = new Map(prev.map((o) => [o.id, o]));
+              memberOrders.forEach((o) => map.set(o.id, o));
+              return Array.from(map.values());
+            });
+          }
+        })
+        .catch((err) => {
+          console.error(`Error loading orders for member ${selectedMemberId}:`, err);
+        });
+    }
+  }, [selectedMemberId, activeView]);
 
   // Handler to apply Master Credit Allocation Limit ($0 - $100,000)
   const handleApplyMasterCreditLimit = (newLimit: number, applyToAllExisting: boolean = true) => {
@@ -817,6 +816,15 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setOrders(updated);
     localStorage.setItem('distro_orders', JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('distro_storage_updated'));
+    
+    // Persist declined order to Firestore under members/{memberId}/orders/{orderId}
+    const declinedOrder = updated.find((o) => o.id === adminReviewingOrder.id);
+    if (declinedOrder) {
+      saveOrderToFirestore(declinedOrder).catch((err) => {
+        console.error(`Error saving declined order #${declinedOrder.orderNumber} to Firestore:`, err);
+      });
+    }
+
     setOrderActionFeedback(`Order #${adminReviewingOrder.orderNumber} has been DECLINED (Reason: ${finalReason}). Status updated to "Declined by Admin".`);
     setAdminReviewingOrder(null);
     setShowDeclineConfirm(false);
@@ -907,6 +915,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
         : `Order approved and placed in Credited status. Amount (${orderTotal.toFixed(2)}) drawn from credit allocation; settlement payment to admin is due within ${memberCycleDays} days.`,
     };
 
+    // Persist approved order to Firestore under members/{memberId}/orders/{orderId}
+    const approvedOrder = updated.find((o) => o.id === adminReviewingOrder.id);
+    if (approvedOrder) {
+      saveOrderToFirestore(approvedOrder).catch((err) => {
+        console.error(`Error saving approved order #${approvedOrder.orderNumber} to Firestore:`, err);
+      });
+    }
+
     try {
       const currentInvoices: InvoiceItem[] = JSON.parse(localStorage.getItem('distro_invoices') || '[]');
       const existingIndex = currentInvoices.findIndex((inv) => inv.orderNumber === adminReviewingOrder.orderNumber);
@@ -918,6 +934,9 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       }
       setInvoices(updatedInvoices);
       localStorage.setItem('distro_invoices', JSON.stringify(updatedInvoices));
+      saveInvoiceToFirestore(newInvoice).catch((err) => {
+        console.error('Error saving new invoice to Firestore:', err);
+      });
     } catch (err) {
       console.error('Invoice sync error:', err);
     }
@@ -982,14 +1001,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setOrderCart((prev) => prev.filter((item) => item.productId !== productId));
   };
 
-  const handleSubmitOrder = (e: React.FormEvent) => {
+  const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (orderCart.length === 0) return;
 
     const cartItemsWithDetails = orderCart.map((item) => ({
       ...item,
-      product: products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
-    })).filter((item) => item.product);
+      product: products.find((p) => p.id === item.productId),
+    })).filter((item): item is typeof item & { product: ProductItem } => Boolean(item.product));
 
     const cartTotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
     const totalItems = cartItemsWithDetails.reduce((sum, item) => sum + item.qty, 0);
@@ -1005,6 +1024,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     const businessAddress = selectedMember 
       ? (selectedMember.businessAddress || selectedMember.storeLocation || selectedStore) 
       : selectedStore;
+    const resolvedMemberId = selectedMember?.id || 'general';
 
     const newOrder: OrderItem = {
       id: `ord_${Date.now()}`,
@@ -1013,8 +1033,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       // EXACT STATUS: "Pending review and approval by Admin" so it appears in "View Open Orders" ready for "$ Review & Set Fees"
       status: 'Pending review and approval by Admin',
       customerName,
-      memberId: selectedMember?.id,
-      memberUsername: selectedMember?.username,
+      memberId: resolvedMemberId,
+      memberUsername: selectedMember?.username || '',
       businessAddress,
       destinationAddress: businessAddress,
       items: cartItemsWithDetails.map((ci) => ({
@@ -1036,9 +1056,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       notes: selectedMember 
         ? `Placed by Admin on behalf of ${selectedMember.name} (@${selectedMember.username})` 
         : 'Placed by Admin on behalf of store account',
+      createdAt: new Date().toISOString(),
     };
 
-    const updatedOrders = [newOrder, ...orders];
+    // Instant local UI update
+    const updatedOrders = [newOrder, ...orders.filter((o) => o.id !== newOrder.id)];
     setOrders(updatedOrders);
     try {
       localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
@@ -1057,6 +1079,14 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     });
     setProducts(updatedProducts);
     saveStoredProducts(updatedProducts);
+
+    // Save to Firestore under members/{memberId}/orders/{orderId}
+    try {
+      await saveOrderToFirestore(newOrder);
+      console.log(`Order #${orderNumber} (${newOrder.id}) saved to Firestore at members/${resolvedMemberId}/orders/${newOrder.id}`);
+    } catch (err) {
+      console.error(`Error saving order #${orderNumber} to Firestore:`, err);
+    }
 
     setOrderSubmittedMsg(`Order #${orderNumber} placed for ${customerName}! Real-time inventory has been updated.`);
     setOrderCart([]);
@@ -1433,10 +1463,16 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
   // Order status advancement handler
   const handleUpdateOrderStatus = (orderId: string, status: 'Open' | 'Processing' | 'Shipped' | 'Completed' | 'Cancelled') => {
+    const target = orders.find((o) => o.id === orderId);
     const updated = orders.map((o) => (o.id === orderId ? { ...o, status } : o));
     setOrders(updated);
     localStorage.setItem('distro_orders', JSON.stringify(updated));
     window.dispatchEvent(new CustomEvent('distro_storage_updated'));
+    if (target) {
+      saveOrderToFirestore({ ...target, status }).catch((err) => {
+        console.error(`Error updating order #${target.orderNumber} status in Firestore:`, err);
+      });
+    }
   };
 
   // Handlers for adding member
@@ -3456,15 +3492,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                           >
                             {m.status === 'Active' ? 'Suspend' : 'Activate'}
                           </button>
-                          <button
-                            id={`delete-member-btn-${m.id}`}
-                            onClick={() => handleDeleteMember(m)}
-                            className="px-2 py-1 text-[11px] font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 border border-red-200/80 rounded transition-colors inline-flex items-center gap-1"
-                            title="Delete and remove member"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            <span>Delete</span>
-                          </button>
                         </td>
                       </tr>
                     ))}
@@ -3499,206 +3526,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                     )}
                   </tbody>
                 </table>
-              </div>
-            </div>
-          )}
-
-          {/* Reset Payments & Invoices Section (Below Manage Members in Admin My Account) */}
-          <div className="bg-amber-50/90 border border-amber-300/80 rounded-xl p-5 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start space-x-3.5">
-              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl border border-amber-300/90 shrink-0">
-                <RotateCcw className="w-5 h-5 text-amber-700" />
-              </div>
-              <div className="space-y-0.5">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-xs font-black text-amber-950 uppercase tracking-wider">
-                    Reset Payments & Invoices (Logic Verification)
-                  </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200/90 text-amber-900 border border-amber-300">
-                    Testing Utility
-                  </span>
-                </div>
-                <p className="text-xs text-amber-900 leading-relaxed max-w-2xl">
-                  Click below to reset all recorded invoices and payment records to zero ($0.00). This returns all credit drawdowns to $0 so you can verify that credit allocation remaining balances recalculate accurately.
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              id="btn-reset-payments-invoices"
-              onClick={() => setIsResetConfirmOpen(true)}
-              className="px-4 py-2.5 bg-rose-600 hover:bg-rose-700 active:scale-98 text-white text-xs font-bold rounded-xl transition-all shadow-xs shrink-0 flex items-center gap-2 cursor-pointer border border-rose-500/30"
-            >
-              <RotateCcw className="w-4 h-4" />
-              <span>Reset Payments and Invoices</span>
-            </button>
-          </div>
-
-          {/* Reset Success Feedback Banner */}
-          {resetSuccessMessage && (
-            <div className="p-4 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded-xl text-xs font-bold flex items-center justify-between animate-in fade-in duration-200 shadow-2xs">
-              <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                <span>{resetSuccessMessage}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setResetSuccessMessage('')}
-                className="text-emerald-700 hover:text-emerald-950 text-sm font-bold ml-4"
-              >
-                &times;
-              </button>
-            </div>
-          )}
-
-          {/* Reset Confirmation Modal */}
-          {isResetConfirmOpen && (
-            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-              <div 
-                id="reset-payments-invoices-modal"
-                className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="p-2 bg-rose-50 text-rose-600 rounded-xl border border-rose-100">
-                      <RotateCcw className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Reset Payments & Invoices</h3>
-                      <p className="text-xs text-slate-500">System ledger verification tool</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setIsResetConfirmOpen(false)}
-                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 text-lg leading-none font-bold"
-                  >
-                    &times;
-                  </button>
-                </div>
-
-                <div className="space-y-3 text-xs text-slate-600">
-                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 flex items-start gap-2.5">
-                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="font-bold text-xs">Reset all invoices and payments to zero ($0.00)?</p>
-                      <p className="text-[11px] leading-relaxed text-rose-800">
-                        This will clear all {invoices.length} invoices and {payments.length} payment records from storage. All members' remaining credit balances will immediately return to 100% available capacity.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-1.5 text-[11px]">
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-medium">Current Invoices:</span>
-                      <span className="font-bold font-mono text-slate-900">{invoices.length} records (${invoices.reduce((s, i) => s + i.amount, 0).toFixed(2)})</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-500 font-medium">Current Payments:</span>
-                      <span className="font-bold font-mono text-slate-900">{payments.length} records (${payments.reduce((s, p) => s + p.amount, 0).toFixed(2)})</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end space-x-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsResetConfirmOpen(false)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    id="confirm-reset-payments-invoices-btn"
-                    onClick={handleResetPaymentsAndInvoices}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" />
-                    <span>Confirm Reset to Zero</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Delete Member Confirmation Modal */}
-          {deletingMember && (
-            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-              <div 
-                id="delete-member-modal"
-                className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-                  <div className="flex items-center space-x-2.5">
-                    <div className="p-2 bg-red-50 text-red-600 rounded-xl border border-red-100">
-                      <UserX className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-bold text-slate-900">Delete Team Member</h3>
-                      <p className="text-xs text-slate-500">Confirm permanent account removal</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setDeletingMember(null)}
-                    className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 text-lg leading-none font-bold"
-                    aria-label="Close"
-                  >
-                    &times;
-                  </button>
-                </div>
-
-                <div className="space-y-3 text-xs">
-                  <div className="p-3.5 bg-red-50/80 border border-red-200 rounded-xl text-red-900 flex items-start gap-2.5">
-                    <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                    <p className="leading-relaxed text-[11px]">
-                      Are you sure you want to delete <strong className="font-bold text-red-950">{deletingMember.name}</strong> (<span className="font-mono">{deletingMember.username}</span>)? This will permanently revoke their portal access, permissions, and assigned credit line.
-                    </p>
-                  </div>
-
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2 text-slate-700">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Assigned Role:</span>
-                      <span className="font-bold text-slate-900">{deletingMember.role}</span>
-                    </div>
-                    <div className="flex justify-between items-start text-xs">
-                      <span className="text-slate-500 font-medium shrink-0">Business Address:</span>
-                      <span className="font-semibold text-slate-800 text-right line-clamp-2 max-w-[240px]">
-                        {deletingMember.businessAddress || deletingMember.storeLocation || '—'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Work Email:</span>
-                      <span className="font-mono text-slate-800">{deletingMember.email}</span>
-                    </div>
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="text-slate-500 font-medium">Credit Limit:</span>
-                      <span className="font-bold font-mono text-blue-700">
-                        ${(deletingMember.creditAllocation ?? 0).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setDeletingMember(null)}
-                    id="cancel-delete-member-btn"
-                    className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => confirmDeleteMember(deletingMember.id)}
-                    id="confirm-delete-member-btn"
-                    className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors shadow-xs inline-flex items-center gap-1.5"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Member</span>
-                  </button>
-                </div>
               </div>
             </div>
           )}
@@ -5454,8 +5281,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     case 'place-new-order':
       const cartItemsWithDetails = orderCart.map((item) => ({
         ...item,
-        product: products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId)!,
-      })).filter((item) => item.product);
+        product: products.find((p) => p.id === item.productId),
+      })).filter((item): item is typeof item & { product: ProductItem } => Boolean(item.product));
 
       const cartTotal = cartItemsWithDetails.reduce((sum, item) => sum + item.product.price * item.qty, 0);
 

@@ -29,6 +29,8 @@ export default function App() {
       if (portal === 'member' || invite || user) {
         setLoginModalRole('member');
         setLoginModalOpen(true);
+        // Clean URL parameters immediately so sensitive strings never persist in address bar or history
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     } catch (e) {
       console.warn('URL param detection error:', e);
@@ -46,6 +48,13 @@ export default function App() {
   };
 
   const handleLogin = (username: string, role: 'admin' | 'member', memberData?: Partial<User>) => {
+    // Sanitize any remaining query parameters
+    try {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } catch {
+      // ignore
+    }
+
     const masterLimit = (() => {
       try {
         const saved = localStorage.getItem('distro_master_credit_limit');
@@ -78,7 +87,15 @@ export default function App() {
     } catch {
       // ignore
     }
+    // Clean URL query parameters and reset all user state
+    try {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } catch {
+      // ignore
+    }
     setCurrentUser(null);
+    setLoginModalOpen(false);
+    setLoginModalRole(null);
     setActiveAdminView('home');
   };
 

@@ -8,7 +8,6 @@ import {
   CATEGORY_LABELS,
   PRODUCTS_UPDATED_EVENT
 } from '../utils/productUtils';
-import { SAMPLE_PRODUCTS } from '../data/sampleData';
 import {
   SlidersHorizontal,
   Upload,
@@ -203,10 +202,10 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
     setImageUploadModalProduct(null);
   };
 
-  // Reset to Factory Defaults
+  // Reset / Clear Catalog
   const handleResetDefaults = () => {
-    if (window.confirm('Reset catalog products, pictures, and stock to factory defaults?')) {
-      handleUpdateProducts(SAMPLE_PRODUCTS, 'Catalog reset to original default inventory.');
+    if (window.confirm('Clear all catalog products so you can create new custom products?')) {
+      handleUpdateProducts([], 'Catalog cleared. You can now create new custom products.');
     }
   };
 

@@ -10,7 +10,6 @@ import {
   OrderCartItem,
   OrderStatus 
 } from '../types';
-import { SAMPLE_PRODUCTS } from '../data/sampleData';
 import { 
   loadStoredProducts, 
   isProductVisibleToMember, 
@@ -67,6 +66,7 @@ import {
   subscribeToMembers,
   subscribeToProducts,
   saveOrderToFirestore,
+  fetchMemberOrdersFromFirestore,
   saveInvoiceToFirestore,
   savePaymentToFirestore
 } from '../firebase/firestoreService';
@@ -230,13 +230,35 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     };
   }, []);
 
+  // Fetch orders from Firestore for this member on load and view change
+  useEffect(() => {
+    const memId = currentMemberRecord?.id || user.memberId;
+    if (memId) {
+      fetchMemberOrdersFromFirestore(memId)
+        .then((mOrders) => {
+          if (mOrders && mOrders.length > 0) {
+            setOrders((prev) => {
+              const map = new Map(prev.map((o) => [o.id, o]));
+              mOrders.forEach((o) => map.set(o.id, o));
+              return Array.from(map.values());
+            });
+          }
+        })
+        .catch((err) => {
+          console.error(`Error loading member orders from Firestore for ${memId}:`, err);
+        });
+    }
+  }, [user.memberId, currentMemberRecord?.id, activeView]);
+
   // Save changes to localStorage and Firestore
   const saveOrders = (updatedOrders: OrderItem[]) => {
     setOrders(updatedOrders);
     localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
-    // Sync latest orders to Firestore
+    // Sync latest orders to Firestore under members/{memberId}/orders/{orderId}
     updatedOrders.forEach((ord) => {
-      saveOrderToFirestore(ord).catch(console.error);
+      saveOrderToFirestore(ord).catch((err) => {
+        console.error(`Error syncing order #${ord.orderNumber} to Firestore:`, err);
+      });
     });
   };
 
@@ -408,7 +430,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
   // Cart items with full details
   const cartItemsWithDetails = orderCart
     .map((item) => {
-      const product = products.find((p) => p.id === item.productId) || SAMPLE_PRODUCTS.find((p) => p.id === item.productId);
+      const product = products.find((p) => p.id === item.productId);
       return product ? { ...item, product } : null;
     })
     .filter((item): item is { productId: string; qty: number; product: ProductItem } => item !== null);
@@ -479,6 +501,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
       total: cartSubtotal, // Base subtotal before Admin adds shipping/taxes
       paymentStatus: 'Credit Allocated',
       notes: orderNotes.trim() || undefined,
+      createdAt: new Date().toISOString(),
     };
 
     const updatedOrders = [newOrder, ...orders];

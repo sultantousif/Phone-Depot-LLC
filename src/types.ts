@@ -178,6 +178,7 @@ export interface OrderItem {
   adminReviewedAt?: string;
   memberAcceptedAt?: string;
   notes?: string;
+  createdAt?: string;
 }
 
 export type InvoiceTitle = 

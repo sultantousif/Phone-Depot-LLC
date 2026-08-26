@@ -49,18 +49,18 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     setInviteNotice(null);
     setLoading(false);
 
-    // Auto-detect invitation query parameters
+    // Auto-detect invitation query parameters (username only, never password)
     try {
       const searchParams = new URLSearchParams(window.location.search);
       const paramUser = searchParams.get('user');
-      const paramPreset = searchParams.get('preset');
       const paramPortal = searchParams.get('portal');
       const paramInvite = searchParams.get('invite');
 
-      if (role === 'member' && (paramUser || paramPreset || paramPortal === 'member' || paramInvite)) {
+      if (role === 'member' && (paramUser || paramPortal === 'member' || paramInvite)) {
         if (paramUser) setUsername(paramUser);
-        if (paramPreset) setPassword(paramPreset);
-        setInviteNotice('✨ Welcome! Your store invitation credentials have been loaded. Click "Sign In to Member Portal" below.');
+        setInviteNotice('✨ Welcome! Please enter your authorized password to sign in.');
+        // Clean URL immediately so credentials and parameters are removed from browser address bar
+        window.history.replaceState({}, document.title, window.location.pathname);
       }
     } catch (e) {
       console.warn('URL param parse error in LoginModal:', e);
@@ -299,7 +299,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
               Username or Registered Email
@@ -313,6 +313,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 id="login-username-input"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                autoComplete="off"
                 placeholder={role === 'admin' ? 'e.g. admin or stousif' : 'e.g. johnmartinez or mem-101'}
                 className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
               />
@@ -332,6 +333,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 id="login-password-input"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
                 placeholder="••••••••"
                 className="w-full pl-9 pr-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
               />

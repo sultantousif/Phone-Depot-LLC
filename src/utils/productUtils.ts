@@ -1,5 +1,4 @@
 import { ProductItem, ProductVisibilityMode } from '../types';
-import { SAMPLE_PRODUCTS } from '../data/sampleData';
 
 export const STORAGE_KEY_PRODUCTS = 'distro_products';
 export const PRODUCTS_UPDATED_EVENT = 'distro_products_updated';
@@ -81,35 +80,41 @@ export const CATEGORY_LABELS: Record<string, string> = {
   'supplies': 'Store Supplies & Packaging',
 };
 
+const LEGACY_SAMPLE_PRODUCT_IDS = new Set([
+  'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11', 'p12', 'p13'
+]);
+
 /**
- * Loads products from localStorage, merging with defaults if missing
+ * Loads products from localStorage, filtering out legacy hardcoded samples
  */
 export function loadStoredProducts(): ProductItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_PRODUCTS);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(SAMPLE_PRODUCTS));
-      return SAMPLE_PRODUCTS;
+      localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify([]));
+      return [];
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
+      // Filter out any legacy hardcoded mock products so only newly created products remain
+      const cleanList = parsed.filter((p) => !LEGACY_SAMPLE_PRODUCT_IDS.has(p.id));
+      if (cleanList.length !== parsed.length) {
+        localStorage.setItem(STORAGE_KEY_PRODUCTS, JSON.stringify(cleanList));
+      }
       // Ensure all objects conform to latest structure
-      return parsed.map((p) => {
-        const defaultMatch = SAMPLE_PRODUCTS.find((sp) => sp.id === p.id);
-        return {
-          ...p,
-          visibilityMode: p.visibilityMode || 'all',
-          allowedMembers: Array.isArray(p.allowedMembers) ? p.allowedMembers : [],
-          hiddenMembers: Array.isArray(p.hiddenMembers) ? p.hiddenMembers : [],
-          showStockToMembers: p.showStockToMembers !== undefined ? p.showStockToMembers : true,
-          image: p.image || defaultMatch?.image || '',
-        };
-      });
+      return cleanList.map((p) => ({
+        ...p,
+        visibilityMode: p.visibilityMode || 'all',
+        allowedMembers: Array.isArray(p.allowedMembers) ? p.allowedMembers : [],
+        hiddenMembers: Array.isArray(p.hiddenMembers) ? p.hiddenMembers : [],
+        showStockToMembers: p.showStockToMembers !== undefined ? p.showStockToMembers : true,
+        image: p.image || '',
+      }));
     }
-    return SAMPLE_PRODUCTS;
+    return [];
   } catch (err) {
     console.error('Failed to load products from localStorage:', err);
-    return SAMPLE_PRODUCTS;
+    return [];
   }
 }
 

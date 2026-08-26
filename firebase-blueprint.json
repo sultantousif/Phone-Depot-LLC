@@ -42,7 +42,8 @@
         "insuranceFee": { "type": "number" },
         "total": { "type": "number" },
         "paymentStatus": { "type": "string" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
       },
       "required": ["id", "orderNumber", "date", "status", "customerName", "itemsCount", "subtotal", "total", "paymentStatus"]
     },
@@ -150,6 +151,10 @@
     "/orders/{orderId}": {
       "schema": { "$ref": "#/entities/Order" },
       "description": "Wholesale purchase orders"
+    },
+    "/members/{memberId}/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Member wholesale purchase orders subcollection"
     },
     "/invoices/{invoiceId}": {
       "schema": { "$ref": "#/entities/Invoice" },

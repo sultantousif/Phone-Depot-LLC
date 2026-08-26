@@ -10,14 +10,12 @@ export function generateMemberInviteUrl(member: TeamMember): string {
   const username = member.tempUsername || member.username || '';
   const email = member.email || '';
   const inviteCode = member.id || '';
-  const pass = member.tempPassword || member.password || generateCompliantTempPassword('Member');
 
   const params = new URLSearchParams({
     portal: 'member',
     user: username,
     email: email,
     invite: inviteCode,
-    preset: pass
   });
 
   return `${origin}${pathname}?${params.toString()}`;

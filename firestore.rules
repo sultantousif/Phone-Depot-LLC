@@ -29,8 +29,18 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Members collection: team member directory
+    // Members collection: team member directory & subcollections
     match /members/{memberId} {
+      allow read, write: if true;
+
+      // Orders subcollection under member: members/{memberId}/orders/{orderId}
+      match /orders/{orderId} {
+        allow read, write: if true;
+      }
+    }
+
+    // Collection group match for orders across all members
+    match /{path=**}/orders/{orderId} {
       allow read, write: if true;
     }
 

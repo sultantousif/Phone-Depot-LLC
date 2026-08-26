@@ -1,5 +1,6 @@
 import {
   collection,
+  collectionGroup,
   doc,
   getDocs,
   setDoc,
@@ -12,7 +13,6 @@ import {
 import { db, handleFirestoreError, OperationType } from './config';
 import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
 import { 
-  SAMPLE_PRODUCTS, 
   SAMPLE_ORDERS,
   INITIAL_ADMINS
 } from '../data/sampleData';
@@ -29,15 +29,14 @@ const SETTINGS_COL = 'shopSettings';
 // Initialize and seed Firestore if empty / remove legacy mock records
 export async function initializeFirestoreData() {
   try {
-    const productsSnap = await getDocs(collection(db, PRODUCTS_COL));
-    if (productsSnap.empty) {
-      console.log('Seeding initial Firestore products...');
-      const batch = writeBatch(db);
-      SAMPLE_PRODUCTS.forEach((prod) => {
-        const ref = doc(db, PRODUCTS_COL, prod.id);
-        batch.set(ref, prod);
-      });
-      await batch.commit();
+    // Remove legacy hardcoded sample products (p1..p13) from Firestore if previously present
+    const legacyProductIds = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10', 'p11', 'p12', 'p13'];
+    for (const prodId of legacyProductIds) {
+      try {
+        await deleteDoc(doc(db, PRODUCTS_COL, prodId));
+      } catch {
+        // ignore
+      }
     }
 
     const ordersSnap = await getDocs(collection(db, ORDERS_COL));
@@ -125,7 +124,78 @@ export function subscribeToProducts(callback: (products: ProductItem[]) => void)
 }
 
 export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
-  const colRef = collection(db, ORDERS_COL);
+  let isUnsubscribed = false;
+  const orderMap = new Map<string, OrderItem>();
+
+  const emit = () => {
+    if (isUnsubscribed) return;
+    callback(Array.from(orderMap.values()));
+  };
+
+  // 1. Subscribe to collectionGroup('orders') across all members
+  let unsubGroup: (() => void) | null = null;
+  try {
+    unsubGroup = onSnapshot(
+      collectionGroup(db, ORDERS_COL),
+      (snapshot) => {
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data() as OrderItem;
+          const id = docSnap.id || data.id;
+          if (id) {
+            orderMap.set(id, { ...data, id });
+          }
+        });
+        emit();
+      },
+      (error) => {
+        console.warn('CollectionGroup orders subscription fallback note:', error);
+      }
+    );
+  } catch (err) {
+    console.warn('Could not initialize collectionGroup listener:', err);
+  }
+
+  // 2. Subscribe to top-level orders collection
+  const unsubTop = onSnapshot(
+    collection(db, ORDERS_COL),
+    (snapshot) => {
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as OrderItem;
+        const id = docSnap.id || data.id;
+        if (id) {
+          orderMap.set(id, { ...data, id });
+        }
+      });
+      emit();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.GET, ORDERS_COL);
+    }
+  );
+
+  // 3. Initial load from all members/{memberId}/orders subcollections
+  fetchAllOrdersFromFirestore().then((loadedOrders) => {
+    loadedOrders.forEach((o) => {
+      if (o.id) orderMap.set(o.id, o);
+    });
+    emit();
+  }).catch((err) => {
+    console.error('Error during initial orders sync:', err);
+  });
+
+  return () => {
+    isUnsubscribed = true;
+    if (unsubGroup) unsubGroup();
+    unsubTop();
+  };
+}
+
+export function subscribeToMemberOrders(memberId: string, callback: (orders: OrderItem[]) => void) {
+  if (!memberId) {
+    callback([]);
+    return () => {};
+  }
+  const colRef = collection(db, MEMBERS_COL, memberId, ORDERS_COL);
   return onSnapshot(
     colRef,
     (snapshot) => {
@@ -136,7 +206,8 @@ export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
       callback(ords);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.GET, ORDERS_COL);
+      console.error(`Error subscribing to orders for member ${memberId}:`, error);
+      handleFirestoreError(error, OperationType.GET, `${MEMBERS_COL}/${memberId}/${ORDERS_COL}`);
     }
   );
 }
@@ -313,6 +384,84 @@ export async function fetchMembersFromFirestore(): Promise<TeamMember[]> {
   }
 }
 
+export async function fetchMemberOrdersFromFirestore(memberId: string): Promise<OrderItem[]> {
+  if (!memberId) return [];
+  try {
+    const colRef = collection(db, MEMBERS_COL, memberId, ORDERS_COL);
+    const snap = await getDocs(colRef);
+    const ords: OrderItem[] = [];
+    snap.forEach((docSnap) => {
+      ords.push({ id: docSnap.id, ...docSnap.data() } as OrderItem);
+    });
+    return ords;
+  } catch (error) {
+    console.error(`Error fetching orders from members/${memberId}/orders:`, error);
+    handleFirestoreError(error, OperationType.GET, `${MEMBERS_COL}/${memberId}/${ORDERS_COL}`);
+    return [];
+  }
+}
+
+export async function fetchAllOrdersFromFirestore(membersList?: TeamMember[]): Promise<OrderItem[]> {
+  const orderMap = new Map<string, OrderItem>();
+
+  // 1. Fetch from collectionGroup across all members
+  try {
+    const groupSnap = await getDocs(collectionGroup(db, ORDERS_COL));
+    groupSnap.forEach((docSnap) => {
+      const data = docSnap.data() as OrderItem;
+      const id = docSnap.id || data.id;
+      if (id) {
+        orderMap.set(id, { ...data, id });
+      }
+    });
+  } catch (groupErr) {
+    console.warn('CollectionGroup query notice:', groupErr);
+  }
+
+  // 2. Fetch from each member's orders subcollection: members/{memberId}/orders
+  try {
+    let mems = membersList;
+    if (!mems || mems.length === 0) {
+      mems = await fetchMembersFromFirestore();
+    }
+    if (mems && mems.length > 0) {
+      await Promise.all(
+        mems.map(async (m) => {
+          if (!m.id) return;
+          try {
+            const subOrders = await fetchMemberOrdersFromFirestore(m.id);
+            subOrders.forEach((o) => {
+              if (o.id) {
+                orderMap.set(o.id, o);
+              }
+            });
+          } catch (mErr) {
+            console.warn(`Could not load orders for member ${m.id}:`, mErr);
+          }
+        })
+      );
+    }
+  } catch (memErr) {
+    console.error('Error fetching member-specific orders:', memErr);
+  }
+
+  // 3. Check top-level orders as well
+  try {
+    const topSnap = await getDocs(collection(db, ORDERS_COL));
+    topSnap.forEach((docSnap) => {
+      const data = docSnap.data() as OrderItem;
+      const id = docSnap.id || data.id;
+      if (id && !orderMap.has(id)) {
+        orderMap.set(id, { ...data, id });
+      }
+    });
+  } catch (topErr) {
+    console.warn('Top-level orders fallback notice:', topErr);
+  }
+
+  return Array.from(orderMap.values());
+}
+
 // ---------------- Firestore Mutations ----------------
 
 // Products
@@ -334,17 +483,85 @@ export async function deleteProductFromFirestore(productId: string) {
   }
 }
 
-// Orders
+// Orders - Writes to members/{memberId}/orders/{orderId} with instant synchronization and error handling
 export async function saveOrderToFirestore(order: OrderItem) {
+  const memberId = order.memberId || 'general';
+  const orderPayload: OrderItem = {
+    id: order.id,
+    orderNumber: order.orderNumber,
+    date: order.date || new Date().toISOString().split('T')[0],
+    status: order.status,
+    customerName: order.customerName,
+    memberId: memberId,
+    memberUsername: order.memberUsername || '',
+    destinationAddress: order.destinationAddress || order.businessAddress || '',
+    businessAddress: order.businessAddress || order.destinationAddress || '',
+    items: order.items || [],
+    itemsCount: typeof order.itemsCount === 'number' ? order.itemsCount : (order.items?.reduce((s, i) => s + i.qty, 0) || 0),
+    subtotal: typeof order.subtotal === 'number' ? order.subtotal : 0,
+    shippingFee: typeof order.shippingFee === 'number' ? order.shippingFee : 0,
+    salesTax: typeof order.salesTax === 'number' ? order.salesTax : 0,
+    serviceTax: typeof order.serviceTax === 'number' ? order.serviceTax : 0,
+    overpackFee: typeof order.overpackFee === 'number' ? order.overpackFee : 0,
+    insuranceFee: typeof order.insuranceFee === 'number' ? order.insuranceFee : 0,
+    total: typeof order.total === 'number' ? order.total : 0,
+    paymentStatus: order.paymentStatus || 'Credit Allocated',
+    notes: order.notes || '',
+    createdAt: order.createdAt || new Date().toISOString(),
+    ...(order.itemsModifiedByAdmin !== undefined ? { itemsModifiedByAdmin: order.itemsModifiedByAdmin } : {}),
+    ...(order.originalItems ? { originalItems: order.originalItems } : {}),
+    ...(order.originalSubtotal !== undefined ? { originalSubtotal: order.originalSubtotal } : {}),
+    ...(order.adminDecision ? { adminDecision: order.adminDecision } : {}),
+    ...(order.adminDeclineReason ? { adminDeclineReason: order.adminDeclineReason } : {}),
+    ...(order.adminReviewedAt ? { adminReviewedAt: order.adminReviewedAt } : {}),
+    ...(order.memberAcceptedAt ? { memberAcceptedAt: order.memberAcceptedAt } : {}),
+  };
+
+  // 1. Write to members/{memberId}/orders/{orderId}
   try {
-    const ref = doc(db, ORDERS_COL, order.id);
-    await setDoc(ref, order, { merge: true });
+    const memberOrderRef = doc(db, MEMBERS_COL, memberId, ORDERS_COL, order.id);
+    await setDoc(memberOrderRef, orderPayload, { merge: true });
+    console.log(`✓ Order ${order.orderNumber} (${order.id}) written to Firestore path: members/${memberId}/orders/${order.id}`);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${ORDERS_COL}/${order.id}`);
+    console.error(`Error saving order to Firestore members subcollection (members/${memberId}/orders/${order.id}):`, error);
+    handleFirestoreError(error, OperationType.WRITE, `${MEMBERS_COL}/${memberId}/${ORDERS_COL}/${order.id}`);
+  }
+
+  // 2. Also write to top-level orders/{orderId}
+  try {
+    const topOrderRef = doc(db, ORDERS_COL, order.id);
+    await setDoc(topOrderRef, orderPayload, { merge: true });
+  } catch (error) {
+    console.error(`Error saving order to top-level orders collection (orders/${order.id}):`, error);
   }
 }
 
-export async function updateOrderStatusInFirestore(orderId: string, updates: Partial<OrderItem>) {
+export async function deleteOrderFromFirestore(orderId: string, memberId?: string) {
+  if (memberId) {
+    try {
+      const memberOrderRef = doc(db, MEMBERS_COL, memberId, ORDERS_COL, orderId);
+      await deleteDoc(memberOrderRef);
+    } catch (error) {
+      console.error(`Error deleting order from members/${memberId}/orders:`, error);
+    }
+  }
+  try {
+    const topOrderRef = doc(db, ORDERS_COL, orderId);
+    await deleteDoc(topOrderRef);
+  } catch (error) {
+    console.error(`Error deleting order from orders collection:`, error);
+  }
+}
+
+export async function updateOrderStatusInFirestore(orderId: string, updates: Partial<OrderItem>, memberId?: string) {
+  if (memberId) {
+    try {
+      const memberOrderRef = doc(db, MEMBERS_COL, memberId, ORDERS_COL, orderId);
+      await updateDoc(memberOrderRef, updates);
+    } catch (error) {
+      console.error(`Error updating order status in members/${memberId}/orders:`, error);
+    }
+  }
   try {
     const ref = doc(db, ORDERS_COL, orderId);
     await updateDoc(ref, updates);
