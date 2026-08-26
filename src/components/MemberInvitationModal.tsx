@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TeamMember } from '../types';
 import { 
   generateMemberInviteUrl, 
@@ -7,6 +7,8 @@ import {
   sendInvitationViaServer,
   copyTextToClipboard 
 } from '../utils/invitationService';
+import { generateCompliantTempPassword } from '../utils/passwordGenerator';
+import { saveMemberToFirestore } from '../firebase/firestoreService';
 import { 
   Mail, 
   Copy, 
@@ -21,7 +23,11 @@ import {
   Clock, 
   Check, 
   FileText,
-  AlertCircle
+  AlertCircle,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 
 interface MemberInvitationModalProps {
@@ -30,6 +36,7 @@ interface MemberInvitationModalProps {
   onClose: () => void;
   senderAdminName?: string;
   onMarkSent?: (memberId: string) => void;
+  onUpdateMember?: (updatedMember: TeamMember) => void;
 }
 
 export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
@@ -38,17 +45,88 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
   onClose,
   senderAdminName = 'Tousif Sultan',
   onMarkSent,
+  onUpdateMember,
 }) => {
+  const [activeMember, setActiveMember] = useState<TeamMember | null>(member);
+  const [activePassword, setActivePassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedEmail, setCopiedEmail] = useState(false);
+  const [copiedPassword, setCopiedPassword] = useState(false);
   const [isDispatching, setIsDispatching] = useState(false);
   const [dispatchStatus, setDispatchStatus] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
   const [activeTab, setActiveTab] = useState<'quick' | 'preview'>('quick');
 
-  if (!isOpen || !member) return null;
+  // Initialize and synchronize member credentials
+  useEffect(() => {
+    if (!isOpen || !member) return;
 
-  const inviteUrl = generateMemberInviteUrl(member);
-  const { subject, body } = generateMemberInviteEmail(member, senderAdminName);
+    setActiveMember(member);
+    
+    // Ensure member has a valid stored temporary password
+    const existingPass = member.tempPassword?.trim() || member.password?.trim();
+    if (existingPass) {
+      setActivePassword(existingPass);
+    } else {
+      const generated = generateCompliantTempPassword('Member');
+      setActivePassword(generated);
+      const updated: TeamMember = {
+        ...member,
+        tempPassword: generated,
+        isTempPassword: true,
+        tempPasswordExpire: member.tempPasswordExpire || '7 Days',
+      };
+      setActiveMember(updated);
+      saveMemberToFirestore(updated).catch((err) => console.warn('Sync temp password error:', err));
+      if (onUpdateMember) onUpdateMember(updated);
+    }
+
+    setDispatchStatus(null);
+    setCopiedLink(false);
+    setCopiedEmail(false);
+    setCopiedPassword(false);
+  }, [isOpen, member?.id]);
+
+  if (!isOpen || !activeMember) return null;
+
+  const resolvedPassword = activePassword || activeMember.tempPassword || activeMember.password || 'Metro2026!';
+  const inviteUrl = generateMemberInviteUrl(activeMember);
+  const { subject, body } = generateMemberInviteEmail(activeMember, senderAdminName, resolvedPassword);
+
+  const handleRegeneratePassword = async () => {
+    const newPass = generateCompliantTempPassword('Member');
+    setActivePassword(newPass);
+    const updated: TeamMember = {
+      ...activeMember,
+      tempPassword: newPass,
+      isTempPassword: true,
+      tempPasswordExpire: activeMember.tempPasswordExpire || '7 Days',
+    };
+    setActiveMember(updated);
+    
+    try {
+      await saveMemberToFirestore(updated);
+      if (onUpdateMember) onUpdateMember(updated);
+      setDispatchStatus({
+        text: `✓ New temporary password "${newPass}" generated and saved directly to the database!`,
+        type: 'success',
+      });
+      setTimeout(() => setDispatchStatus(null), 5000);
+    } catch (err: any) {
+      setDispatchStatus({
+        text: 'Failed to persist new password to database: ' + err?.message,
+        type: 'error',
+      });
+    }
+  };
+
+  const handleCopyPassword = async () => {
+    const success = await copyTextToClipboard(resolvedPassword);
+    if (success) {
+      setCopiedPassword(true);
+      setTimeout(() => setCopiedPassword(false), 2500);
+    }
+  };
 
   const handleCopyLink = async () => {
     const success = await copyTextToClipboard(inviteUrl);
@@ -68,8 +146,8 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
   };
 
   const handleOpenEmailClient = () => {
-    triggerMailtoInvite(member, senderAdminName);
-    if (onMarkSent) onMarkSent(member.id);
+    triggerMailtoInvite(activeMember, senderAdminName, resolvedPassword);
+    if (onMarkSent) onMarkSent(activeMember.id);
     setDispatchStatus({
       text: 'Mail client opened! Email draft created with member invitation details.',
       type: 'info',
@@ -81,12 +159,12 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
     setIsDispatching(true);
     setDispatchStatus(null);
     try {
-      const res = await sendInvitationViaServer(member, senderAdminName);
+      const res = await sendInvitationViaServer(activeMember, senderAdminName, undefined, resolvedPassword);
       setIsDispatching(false);
       if (res.success) {
-        if (onMarkSent) onMarkSent(member.id);
+        if (onMarkSent) onMarkSent(activeMember.id);
         setDispatchStatus({
-          text: `✓ Invitation dispatched to ${member.email} from admin@hgwcwportal.com!`,
+          text: `✓ Invitation dispatched to ${activeMember.email} with password "${resolvedPassword}"!`,
           type: 'success',
         });
       } else {
@@ -119,13 +197,13 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-bold tracking-tight">Member Invitation & Setup Link</h3>
+                <h3 className="text-base font-bold tracking-tight">Member Invitation & Credentials</h3>
                 <span className="text-[10px] bg-white/20 text-white font-semibold px-2 py-0.5 rounded-full">
-                  Secure Access
+                  Verified Database Sync
                 </span>
               </div>
               <p className="text-xs text-blue-100">
-                Send credentials or copy direct activation link for <strong className="text-white">{member.name}</strong>
+                Send credentials or copy direct activation link for <strong className="text-white">{activeMember.name}</strong>
               </p>
             </div>
           </div>
@@ -172,19 +250,19 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center space-x-3">
               <div className="w-11 h-11 rounded-xl bg-blue-100 text-blue-700 font-extrabold flex items-center justify-center text-sm shrink-0 border border-blue-200">
-                {member.name.charAt(0)}
+                {activeMember.name.charAt(0)}
               </div>
               <div>
                 <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                  <span>{member.name}</span>
+                  <span>{activeMember.name}</span>
                   <span className="text-[10px] bg-slate-200 text-slate-700 font-semibold px-2 py-0.5 rounded">
-                    {member.role}
+                    {activeMember.role}
                   </span>
                 </h4>
                 <div className="flex items-center gap-2 text-xs text-slate-500 font-mono mt-0.5">
-                  <span>{member.email}</span>
+                  <span>{activeMember.email}</span>
                   <span>&bull;</span>
-                  <span>Username: <strong>@{member.tempUsername || member.username}</strong></span>
+                  <span>Username: <strong>@{activeMember.tempUsername || activeMember.username}</strong></span>
                 </div>
               </div>
             </div>
@@ -192,10 +270,10 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
             <div className="text-right sm:border-l sm:border-slate-200 sm:pl-4">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Credit Allocation</span>
               <span className="text-sm font-mono font-extrabold text-blue-700">
-                ${(member.creditAllocation || 10000).toLocaleString()}
+                ${(activeMember.creditAllocation || 10000).toLocaleString()}
               </span>
               <span className="text-[10px] text-slate-500 block">
-                Net {member.paymentCycleDays || 14} Days
+                Net {activeMember.paymentCycleDays || 14} Days
               </span>
             </div>
           </div>
@@ -222,6 +300,67 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
 
           {activeTab === 'quick' ? (
             <div className="space-y-5">
+              {/* Authorized Temporary Password & Credential Box */}
+              <div className="bg-emerald-50/70 border border-emerald-300/80 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-emerald-950 font-bold text-xs uppercase tracking-wider">
+                    <Key className="w-4 h-4 text-emerald-600" />
+                    <span>Authorized Temporary Password (Stored in DB)</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-200/80 text-emerald-900 font-bold px-2 py-0.5 rounded">
+                    Active for Login
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Username Display */}
+                  <div className="bg-white p-3 rounded-lg border border-emerald-200 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Portal Username</span>
+                    <div className="font-mono text-sm font-extrabold text-slate-900 truncate">
+                      {activeMember.tempUsername || activeMember.username}
+                    </div>
+                  </div>
+
+                  {/* Password with Regenerate & Copy Controls */}
+                  <div className="bg-white p-3 rounded-lg border border-emerald-200 space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Temporary Password</span>
+                    <div className="flex items-center justify-between gap-1.5">
+                      <div className="font-mono text-sm font-extrabold text-emerald-700 tracking-wide select-all">
+                        {showPassword ? resolvedPassword : '••••••••••••'}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="p-1 text-slate-500 hover:text-slate-800 rounded hover:bg-slate-100 transition-colors"
+                          title={showPassword ? 'Hide password' : 'Show password'}
+                        >
+                          {showPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCopyPassword}
+                          className="p-1 text-slate-600 hover:text-emerald-700 rounded hover:bg-emerald-50 transition-colors flex items-center gap-1 text-[11px] font-semibold"
+                          title="Copy Password"
+                        >
+                          {copiedPassword ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedPassword ? 'Copied' : 'Copy'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRegeneratePassword}
+                          className="p-1 text-emerald-700 hover:text-emerald-900 rounded hover:bg-emerald-100 transition-colors flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
+                          title="Generate new compliant password and save immediately to database"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Regen</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Direct Invitation URL Section */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-800 flex items-center justify-between">
@@ -313,11 +452,11 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
-                  Sends an official onboarding invitation and single-use setup credentials directly to the member from your connected domain email.
+                  Sends an official onboarding invitation and temporary login credentials directly to the member from your connected domain email.
                 </p>
                 <div className="flex items-center justify-between pt-1">
                   <span className="text-[11px] text-slate-400 font-mono">
-                    Recipient: <strong className="text-white">{member.email}</strong>
+                    Recipient: <strong className="text-white">{activeMember.email}</strong>
                   </span>
                   <button
                     type="button"
@@ -335,24 +474,6 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
                   </button>
                 </div>
               </div>
-
-              {/* Login Credentials Box */}
-              <div className="bg-amber-50/60 border border-amber-200/80 rounded-xl p-3.5 text-xs text-amber-900 space-y-1.5">
-                <div className="font-bold flex items-center gap-1.5 text-amber-950">
-                  <Key className="w-3.5 h-3.5 text-amber-600" />
-                  <span>Credential Checklist for Member:</span>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono pt-1">
-                  <div className="bg-white/80 p-2 rounded border border-amber-200/60">
-                    <span className="text-slate-500 block text-[10px]">Username:</span>
-                    <strong className="text-slate-900">{member.tempUsername || member.username}</strong>
-                  </div>
-                  <div className="bg-white/80 p-2 rounded border border-amber-200/60">
-                    <span className="text-slate-500 block text-[10px]">Initial Password:</span>
-                    <strong className="text-slate-900">{member.tempPassword || member.password || 'Metro2026!'}</strong>
-                  </div>
-                </div>
-              </div>
             </div>
           ) : (
             /* Email Preview Tab */
@@ -360,7 +481,7 @@ export const MemberInvitationModal: React.FC<MemberInvitationModalProps> = ({
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 font-sans text-xs">
                 <div className="border-b border-slate-200 pb-2 space-y-1 text-slate-600">
                   <div><strong>From:</strong> HG World Class Wholesale &lt;admin@hgwcwportal.com&gt;</div>
-                  <div><strong>To:</strong> {member.name} &lt;{member.email}&gt;</div>
+                  <div><strong>To:</strong> {activeMember.name} &lt;{activeMember.email}&gt;</div>
                   <div><strong>Subject:</strong> <span className="text-slate-900 font-semibold">{subject}</span></div>
                 </div>
                 <div className="whitespace-pre-wrap font-mono text-[11px] text-slate-800 bg-white p-3.5 rounded-lg border border-slate-200 leading-relaxed max-h-72 overflow-y-auto">

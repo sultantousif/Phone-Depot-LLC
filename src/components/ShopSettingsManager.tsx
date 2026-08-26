@@ -9,6 +9,13 @@ import {
   PRODUCTS_UPDATED_EVENT
 } from '../utils/productUtils';
 import {
+  subscribeToProducts,
+  fetchProductsFromFirestore,
+  saveProductToFirestore,
+  deleteProductFromFirestore,
+  clearAllProductsFromFirestore
+} from '../firebase/firestoreService';
+import {
   SlidersHorizontal,
   Upload,
   Image as ImageIcon,
@@ -87,14 +94,34 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
   const [editProductModalProduct, setEditProductModalProduct] = useState<ProductItem | null>(null);
   const [isNewProductModalOpen, setIsNewProductModalOpen] = useState(false);
 
-  // Listen for external product updates
+  // Real-time Firestore subscription & initial fetch
   useEffect(() => {
+    // 1. Direct initial fetch from Firestore
+    fetchProductsFromFirestore()
+      .then((loadedProds) => {
+        if (loadedProds && loadedProds.length > 0) {
+          setProducts(loadedProds);
+          saveStoredProducts(loadedProds);
+        }
+      })
+      .catch((err) => {
+        console.error('Initial product load from Firestore failed:', err);
+      });
+
+    // 2. Real-time onSnapshot listener from shared Firestore products collection
+    const unsubscribe = subscribeToProducts((liveProds) => {
+      setProducts(liveProds || []);
+      saveStoredProducts(liveProds || []);
+    });
+
     const handleProductsUpdated = () => {
       setProducts(loadStoredProducts());
     };
     window.addEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
     window.addEventListener('storage', handleProductsUpdated);
+
     return () => {
+      unsubscribe();
       window.removeEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
       window.removeEventListener('storage', handleProductsUpdated);
     };
@@ -108,109 +135,177 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
     }, 4500);
   };
 
-  // Helper to persist updated product array
+  // Helper to persist updated product array locally and notify UI
   const handleUpdateProducts = (updated: ProductItem[], msg?: string) => {
     setProducts(updated);
     saveStoredProducts(updated);
     if (msg) showFeedback('success', msg);
   };
 
+  // Create Product with Firestore Persistence
+  const handleCreateProduct = async (newProduct: ProductItem) => {
+    const updated = [newProduct, ...products.filter((p) => p.id !== newProduct.id)];
+    handleUpdateProducts(updated, `Saving "${newProduct.name}" to Firestore...`);
+    try {
+      await saveProductToFirestore(newProduct);
+      showFeedback('success', `Product "${newProduct.name}" successfully created and saved to Firestore.`);
+    } catch (err) {
+      console.error('Error saving new product to Firestore:', err);
+      showFeedback('error', `Failed to save "${newProduct.name}" to Firestore.`);
+    }
+  };
+
+  // Edit Product with Firestore Persistence
+  const handleEditProduct = async (savedProduct: ProductItem) => {
+    const updated = products.map((p) => (p.id === savedProduct.id ? savedProduct : p));
+    handleUpdateProducts(updated, `Updating "${savedProduct.name}" in Firestore...`);
+    try {
+      await saveProductToFirestore(savedProduct);
+      showFeedback('success', `Product "${savedProduct.name}" updated successfully.`);
+    } catch (err) {
+      console.error('Error updating product in Firestore:', err);
+      showFeedback('error', `Failed to update "${savedProduct.name}" in Firestore.`);
+    }
+  };
+
+  // Delete Product with Firestore Persistence
+  const handleDeleteProduct = async (productId: string, productName?: string) => {
+    const name = productName || 'this item';
+    if (!window.confirm(`Are you sure you want to permanently delete "${name}" from the shared catalog? This will remove it for all members and admins.`)) {
+      return;
+    }
+    const updated = products.filter((p) => p.id !== productId);
+    handleUpdateProducts(updated, `Removing "${name}"...`);
+    try {
+      await deleteProductFromFirestore(productId);
+      showFeedback('success', `"${name}" removed from Firestore.`);
+    } catch (err) {
+      console.error('Error deleting product from Firestore:', err);
+      showFeedback('error', `Failed to delete "${name}" from Firestore.`);
+    }
+  };
+
   // Quick Stock Adjustment
-  const handleAdjustStock = (productId: string, delta: number) => {
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        const newStock = Math.max(0, (p.stock || 0) + delta);
-        return { ...p, stock: newStock };
-      }
-      return p;
-    });
+  const handleAdjustStock = async (productId: string, delta: number) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const newStock = Math.max(0, (target.stock || 0) + delta);
+    const updatedProduct = { ...target, stock: newStock };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(updated);
+    try {
+      await saveProductToFirestore(updatedProduct);
+    } catch (err) {
+      console.error('Failed to sync stock change to Firestore:', err);
+    }
   };
 
   // Direct Stock Set
-  const handleSetStock = (productId: string, newStock: number) => {
+  const handleSetStock = async (productId: string, newStock: number) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
     const validStock = Math.max(0, isNaN(newStock) ? 0 : newStock);
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        return { ...p, stock: validStock };
-      }
-      return p;
-    });
+    const updatedProduct = { ...target, stock: validStock };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(updated, `Stock updated to ${validStock} units.`);
+    try {
+      await saveProductToFirestore(updatedProduct);
+    } catch (err) {
+      console.error('Failed to sync stock to Firestore:', err);
+    }
   };
 
   // Toggle Numerical Stock Visibility to Shopping Members
-  const handleToggleShowStockCount = (productId: string) => {
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        const nextState = p.showStockToMembers === false ? true : false;
-        return { ...p, showStockToMembers: nextState };
-      }
-      return p;
-    });
+  const handleToggleShowStockCount = async (productId: string) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const nextState = target.showStockToMembers === false ? true : false;
+    const updatedProduct = { ...target, showStockToMembers: nextState };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(updated, 'Member stock count visibility toggled.');
+    try {
+      await saveProductToFirestore(updatedProduct);
+    } catch (err) {
+      console.error('Failed to sync stock visibility toggle to Firestore:', err);
+    }
   };
 
   // Quick Toggle: Hide / Show Globally
-  const handleQuickToggleVisibility = (productId: string) => {
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        const newMode: ProductVisibilityMode = p.visibilityMode === 'hidden' ? 'all' : 'hidden';
-        return { ...p, visibilityMode: newMode };
-      }
-      return p;
-    });
-    const target = updated.find((p) => p.id === productId);
-    const isNowVisible = target?.visibilityMode !== 'hidden';
+  const handleQuickToggleVisibility = async (productId: string) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const newMode: ProductVisibilityMode = target.visibilityMode === 'hidden' ? 'all' : 'hidden';
+    const updatedProduct = { ...target, visibilityMode: newMode };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(
       updated,
-      isNowVisible ? `"${target?.name}" is now visible to shopping members.` : `"${target?.name}" is now HIDDEN from members.`
+      newMode !== 'hidden' ? `"${target.name}" is now visible to shopping members.` : `"${target.name}" is now HIDDEN from members.`
     );
+    try {
+      await saveProductToFirestore(updatedProduct);
+    } catch (err) {
+      console.error('Failed to sync visibility toggle to Firestore:', err);
+    }
   };
 
   // Update Visibility Rules (All, Hidden, Whitelist, Blacklist)
-  const handleSaveVisibilityRules = (
+  const handleSaveVisibilityRules = async (
     productId: string,
     mode: ProductVisibilityMode,
     allowed: string[],
     hidden: string[]
   ) => {
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        return {
-          ...p,
-          visibilityMode: mode,
-          allowedMembers: allowed,
-          hiddenMembers: hidden
-        };
-      }
-      return p;
-    });
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const updatedProduct = {
+      ...target,
+      visibilityMode: mode,
+      allowedMembers: allowed,
+      hiddenMembers: hidden
+    };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(updated, 'Member visibility rules updated successfully.');
     setMemberVisibilityModalProduct(null);
+    try {
+      await saveProductToFirestore(updatedProduct);
+      showFeedback('success', 'Visibility rules saved to Firestore.');
+    } catch (err) {
+      console.error('Failed to save visibility rules to Firestore:', err);
+      showFeedback('error', 'Failed to save visibility rules to Firestore.');
+    }
   };
 
   // Save Uploaded / Selected Image
-  const handleSaveProductImage = (productId: string, imageUrl: string) => {
-    const updated = products.map((p) => {
-      if (p.id === productId) {
-        return { ...p, image: imageUrl };
-      }
-      return p;
-    });
+  const handleSaveProductImage = async (productId: string, imageUrl: string) => {
+    const target = products.find((p) => p.id === productId);
+    if (!target) return;
+    const updatedProduct = { ...target, image: imageUrl };
+    const updated = products.map((p) => (p.id === productId ? updatedProduct : p));
     handleUpdateProducts(updated, 'Device picture updated successfully.');
     setImageUploadModalProduct(null);
+    try {
+      await saveProductToFirestore(updatedProduct);
+      showFeedback('success', 'Product photo saved to Firestore.');
+    } catch (err) {
+      console.error('Failed to save product image to Firestore:', err);
+    }
   };
 
   // Reset / Clear Catalog
-  const handleResetDefaults = () => {
-    if (window.confirm('Clear all catalog products so you can create new custom products?')) {
+  const handleResetDefaults = async () => {
+    if (window.confirm('Clear all catalog products so you can create new custom products? This will also remove them from Firestore.')) {
       handleUpdateProducts([], 'Catalog cleared. You can now create new custom products.');
+      try {
+        await clearAllProductsFromFirestore();
+        showFeedback('success', 'All products cleared from Firestore.');
+      } catch (err) {
+        console.error('Failed to clear products from Firestore:', err);
+      }
     }
   };
 
   // Restock all low items
-  const handleBulkRestock = () => {
+  const handleBulkRestock = async () => {
     const updated = products.map((p) => {
       if (p.stock < 15) {
         return { ...p, stock: 50 };
@@ -218,6 +313,16 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
       return p;
     });
     handleUpdateProducts(updated, 'All low stock items replenished to 50 units.');
+    try {
+      await Promise.all(
+        updated
+          .filter((p) => p.stock === 50)
+          .map((p) => saveProductToFirestore(p))
+      );
+      showFeedback('success', 'Low stock items restocked in Firestore.');
+    } catch (err) {
+      console.error('Failed to restock in Firestore:', err);
+    }
   };
 
   // Filtered Products
@@ -723,13 +828,28 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <h3 className="text-base font-bold text-slate-900 leading-snug">{product.name}</h3>
-                      <button
-                        onClick={() => setEditProductModalProduct(product)}
-                        className="p-1 text-slate-400 hover:text-blue-600 rounded-md transition-colors"
-                        title="Edit product details"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditProductModalProduct(product);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title="Edit product details"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteProduct(product.id, product.name);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Delete product permanently from database"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                     <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">{product.description}</p>
                   </div>
@@ -1065,15 +1185,22 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
                       <td className="py-3.5 px-4 text-right space-x-2">
                         <button
                           onClick={() => setImageUploadModalProduct(product)}
-                          className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200"
+                          className="px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg border border-blue-200 cursor-pointer"
                         >
                           Picture
                         </button>
                         <button
                           onClick={() => setEditProductModalProduct(product)}
-                          className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200"
+                          className="px-2.5 py-1 text-xs font-bold text-slate-700 hover:bg-slate-100 rounded-lg border border-slate-200 cursor-pointer"
                         >
                           Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteProduct(product.id, product.name)}
+                          className="px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg border border-rose-200 cursor-pointer"
+                          title="Delete product permanently"
+                        >
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -1115,13 +1242,16 @@ export const ShopSettingsManager: React.FC<ShopSettingsManagerProps> = ({
             setIsNewProductModalOpen(false);
             setEditProductModalProduct(null);
           }}
+          onDelete={(productId, productName) => {
+            setIsNewProductModalOpen(false);
+            setEditProductModalProduct(null);
+            handleDeleteProduct(productId, productName);
+          }}
           onSave={(savedProduct) => {
             if (editProductModalProduct) {
-              const updated = products.map((p) => (p.id === savedProduct.id ? savedProduct : p));
-              handleUpdateProducts(updated, `Product "${savedProduct.name}" updated successfully.`);
+              handleEditProduct(savedProduct);
             } else {
-              const updated = [savedProduct, ...products];
-              handleUpdateProducts(updated, `New catalog item "${savedProduct.name}" created.`);
+              handleCreateProduct(savedProduct);
             }
             setIsNewProductModalOpen(false);
             setEditProductModalProduct(null);
@@ -1655,6 +1785,7 @@ interface ProductFormModalProps {
   product?: ProductItem;
   allMembers: TeamMember[];
   onClose: () => void;
+  onDelete?: (productId: string, productName?: string) => void;
   onSave: (product: ProductItem) => void;
 }
 
@@ -1662,6 +1793,7 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
   product,
   allMembers,
   onClose,
+  onDelete,
   onSave,
 }) => {
   const [name, setName] = useState(product?.name || '');
@@ -1853,20 +1985,35 @@ const ProductFormModal: React.FC<ProductFormModalProps> = ({
           </div>
 
           {/* Form Actions */}
-          <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-end gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
-            >
-              {product ? 'Save Changes' : 'Add to Catalog'}
-            </button>
+          <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between gap-3 pt-4">
+            <div>
+              {product && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(product.id, product.name)}
+                  className="px-3 py-2 text-xs font-bold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl border border-rose-200 transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete from DB
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                {product ? 'Save Changes' : 'Add to Catalog'}
+              </button>
+            </div>
           </div>
 
         </form>

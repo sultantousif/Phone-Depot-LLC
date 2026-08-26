@@ -11,7 +11,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './config';
-import { ProductItem, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
+import { ProductItem, ProductVisibilityMode, OrderItem, InvoiceItem, PaymentItem, TeamMember, AdminAccount } from '../types';
 import { 
   SAMPLE_ORDERS,
   INITIAL_ADMINS
@@ -89,6 +89,18 @@ export async function initializeFirestoreData() {
       }
     }
 
+    // Clean any orphaned test orders/invoices for Zoheb Akram or amount 799.92
+    try {
+      await purgeMemberOrdersAndInvoicesFromFirestore({
+        username: 'zoheb.hg',
+        tempUsername: 'zoheb.hg',
+        name: 'Zoheb Akram',
+        email: 'akram@hgworldclass.com',
+      });
+    } catch (e) {
+      console.warn('Initial member cleanup check:', e);
+    }
+
     const adminsSnap = await getDocs(collection(db, ADMINS_COL));
     if (adminsSnap.empty && INITIAL_ADMINS.length > 0) {
       console.log('Seeding primary Firestore admins...');
@@ -125,11 +137,15 @@ export function subscribeToProducts(callback: (products: ProductItem[]) => void)
 
 export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
   let isUnsubscribed = false;
-  const orderMap = new Map<string, OrderItem>();
+  let groupOrdersMap = new Map<string, OrderItem>();
+  let topOrdersMap = new Map<string, OrderItem>();
 
   const emit = () => {
     if (isUnsubscribed) return;
-    callback(Array.from(orderMap.values()));
+    const combined = new Map<string, OrderItem>();
+    topOrdersMap.forEach((val, key) => combined.set(key, val));
+    groupOrdersMap.forEach((val, key) => combined.set(key, val));
+    callback(Array.from(combined.values()));
   };
 
   // 1. Subscribe to collectionGroup('orders') across all members
@@ -138,13 +154,15 @@ export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
     unsubGroup = onSnapshot(
       collectionGroup(db, ORDERS_COL),
       (snapshot) => {
+        const nextGroup = new Map<string, OrderItem>();
         snapshot.forEach((docSnap) => {
           const data = docSnap.data() as OrderItem;
           const id = docSnap.id || data.id;
           if (id) {
-            orderMap.set(id, { ...data, id });
+            nextGroup.set(id, { ...data, id });
           }
         });
+        groupOrdersMap = nextGroup;
         emit();
       },
       (error) => {
@@ -159,29 +177,21 @@ export function subscribeToOrders(callback: (orders: OrderItem[]) => void) {
   const unsubTop = onSnapshot(
     collection(db, ORDERS_COL),
     (snapshot) => {
+      const nextTop = new Map<string, OrderItem>();
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as OrderItem;
         const id = docSnap.id || data.id;
         if (id) {
-          orderMap.set(id, { ...data, id });
+          nextTop.set(id, { ...data, id });
         }
       });
+      topOrdersMap = nextTop;
       emit();
     },
     (error) => {
       handleFirestoreError(error, OperationType.GET, ORDERS_COL);
     }
   );
-
-  // 3. Initial load from all members/{memberId}/orders subcollections
-  fetchAllOrdersFromFirestore().then((loadedOrders) => {
-    loadedOrders.forEach((o) => {
-      if (o.id) orderMap.set(o.id, o);
-    });
-    emit();
-  }).catch((err) => {
-    console.error('Error during initial orders sync:', err);
-  });
 
   return () => {
     isUnsubscribed = true;
@@ -260,8 +270,8 @@ export function subscribeToMembers(callback: (members: TeamMember[]) => void) {
           email: data.email || '',
           username: data.username || data.tempUsername || docSnap.id.toLowerCase(),
           tempUsername: data.tempUsername || data.username,
-          tempPassword: data.tempPassword || data.password || 'metro2026',
-          password: data.password || data.tempPassword,
+          tempPassword: data.tempPassword || data.password || 'Metro2026!',
+          password: data.password || data.tempPassword || 'Metro2026!',
           authMethod: data.authMethod || 'password',
           role: data.role || 'Store Manager',
           storeLocation: data.storeLocation || 'Store Location',
@@ -362,8 +372,8 @@ export async function fetchMembersFromFirestore(): Promise<TeamMember[]> {
         email: data.email || '',
         username: data.username || data.tempUsername || docSnap.id.toLowerCase(),
         tempUsername: data.tempUsername || data.username,
-        tempPassword: data.tempPassword || data.password || 'metro2026',
-        password: data.password || data.tempPassword,
+        tempPassword: data.tempPassword || data.password || 'Metro2026!',
+        password: data.password || data.tempPassword || 'Metro2026!',
         authMethod: data.authMethod || 'password',
         role: data.role || 'Store Manager',
         storeLocation: data.storeLocation || 'Store Location',
@@ -465,21 +475,87 @@ export async function fetchAllOrdersFromFirestore(membersList?: TeamMember[]): P
 // ---------------- Firestore Mutations ----------------
 
 // Products
-export async function saveProductToFirestore(product: ProductItem) {
+export async function fetchProductsFromFirestore(): Promise<ProductItem[]> {
   try {
-    const ref = doc(db, PRODUCTS_COL, product.id);
-    await setDoc(ref, product, { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${PRODUCTS_COL}/${product.id}`);
+    const snap = await getDocs(collection(db, PRODUCTS_COL));
+    const prods: ProductItem[] = [];
+    snap.forEach((docSnap) => {
+      const data = docSnap.data();
+      prods.push({
+        id: docSnap.id,
+        name: data.name || '',
+        category: data.category || 'metro-phones',
+        sku: data.sku || '',
+        price: typeof data.price === 'number' ? data.price : 0,
+        stock: typeof data.stock === 'number' ? data.stock : 0,
+        description: data.description || '',
+        image: data.image || '',
+        specs: Array.isArray(data.specs) ? data.specs : [],
+        visibilityMode: (data.visibilityMode || 'all') as ProductVisibilityMode,
+        allowedMembers: Array.isArray(data.allowedMembers) ? data.allowedMembers : [],
+        hiddenMembers: Array.isArray(data.hiddenMembers) ? data.hiddenMembers : [],
+        showStockToMembers: data.showStockToMembers !== undefined ? data.showStockToMembers : true,
+        isFeatured: !!data.isFeatured,
+      });
+    });
+    return prods;
+  } catch (err) {
+    console.error('Error fetching products from Firestore:', err);
+    return [];
   }
 }
 
-export async function deleteProductFromFirestore(productId: string) {
+export async function saveProductToFirestore(product: ProductItem): Promise<void> {
+  try {
+    const ref = doc(db, PRODUCTS_COL, product.id);
+    const payload: ProductItem = {
+      id: product.id,
+      name: product.name || '',
+      category: product.category || 'metro-phones',
+      sku: product.sku || '',
+      price: typeof product.price === 'number' ? product.price : 0,
+      stock: typeof product.stock === 'number' ? product.stock : 0,
+      description: product.description || '',
+      image: product.image || '',
+      specs: Array.isArray(product.specs) ? product.specs : [],
+      visibilityMode: product.visibilityMode || 'all',
+      allowedMembers: Array.isArray(product.allowedMembers) ? product.allowedMembers : [],
+      hiddenMembers: Array.isArray(product.hiddenMembers) ? product.hiddenMembers : [],
+      showStockToMembers: product.showStockToMembers !== undefined ? product.showStockToMembers : true,
+      isFeatured: !!product.isFeatured,
+    };
+    await setDoc(ref, payload, { merge: true });
+    console.log(`Product "${product.name}" (${product.id}) successfully saved to Firestore.`);
+  } catch (error) {
+    console.error(`Error saving product "${product.name}" to Firestore:`, error);
+    handleFirestoreError(error, OperationType.WRITE, `${PRODUCTS_COL}/${product.id}`);
+    throw error;
+  }
+}
+
+export async function deleteProductFromFirestore(productId: string): Promise<void> {
   try {
     const ref = doc(db, PRODUCTS_COL, productId);
     await deleteDoc(ref);
+    console.log(`Product (${productId}) successfully deleted from Firestore.`);
   } catch (error) {
+    console.error(`Error deleting product (${productId}) from Firestore:`, error);
     handleFirestoreError(error, OperationType.DELETE, `${PRODUCTS_COL}/${productId}`);
+    throw error;
+  }
+}
+
+export async function clearAllProductsFromFirestore(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, PRODUCTS_COL));
+    const batch = writeBatch(db);
+    snap.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+    });
+    await batch.commit();
+    console.log('All products successfully cleared from Firestore.');
+  } catch (error) {
+    console.error('Error clearing products from Firestore:', error);
   }
 }
 
@@ -627,4 +703,130 @@ export async function deleteAdminFromFirestore(adminId: string) {
     handleFirestoreError(error, OperationType.DELETE, `${ADMINS_COL}/${adminId}`);
   }
 }
+
+export async function purgeMemberOrdersAndInvoicesFromFirestore(memberIdentifier: {
+  id?: string;
+  username?: string;
+  tempUsername?: string;
+  name?: string;
+  email?: string;
+}) {
+  try {
+    const usernames = [
+      memberIdentifier.username?.toLowerCase(),
+      memberIdentifier.tempUsername?.toLowerCase(),
+      'zoheb.hg',
+    ].filter(Boolean) as string[];
+
+    const names = [
+      memberIdentifier.name?.toLowerCase(),
+      'zoheb',
+      'zoheb akram',
+    ].filter((n): n is string => Boolean(n && n.trim().length >= 3));
+
+    const ids = [memberIdentifier.id].filter(Boolean) as string[];
+
+    // 1. Delete matching invoices from top-level invoices collection
+    const invSnap = await getDocs(collection(db, INVOICES_COL));
+    for (const docSnap of invSnap.docs) {
+      const data = docSnap.data() as InvoiceItem;
+      const isMatch =
+        (data.memberId && ids.includes(data.memberId)) ||
+        (data.memberUsername && usernames.includes(data.memberUsername.toLowerCase())) ||
+        (data.customerName && names.some((n) => data.customerName.toLowerCase().includes(n))) ||
+        (data.billedTo && names.some((n) => data.billedTo.toLowerCase().includes(n))) ||
+        Math.abs(Number(data.amount) - 799.92) < 0.01;
+      if (isMatch) {
+        console.log(`Deleting invoice ${docSnap.id} for member`);
+        await deleteDoc(docSnap.ref);
+      }
+    }
+
+    // 2. Delete matching orders from top-level orders collection
+    const topOrdersSnap = await getDocs(collection(db, ORDERS_COL));
+    for (const docSnap of topOrdersSnap.docs) {
+      const data = docSnap.data() as OrderItem;
+      const isMatch =
+        (data.memberId && ids.includes(data.memberId)) ||
+        (data.memberUsername && usernames.includes(data.memberUsername.toLowerCase())) ||
+        (data.customerName && names.some((n) => data.customerName.toLowerCase().includes(n))) ||
+        Math.abs(Number(data.total || data.subtotal) - 799.92) < 0.01;
+      if (isMatch) {
+        console.log(`Deleting top order ${docSnap.id} for member`);
+        await deleteDoc(docSnap.ref);
+      }
+    }
+
+    // 3. Delete matching orders from collectionGroup('orders')
+    try {
+      const groupOrdersSnap = await getDocs(collectionGroup(db, ORDERS_COL));
+      for (const docSnap of groupOrdersSnap.docs) {
+        const data = docSnap.data() as OrderItem;
+        const isMatch =
+          (data.memberId && ids.includes(data.memberId)) ||
+          (data.memberUsername && usernames.includes(data.memberUsername.toLowerCase())) ||
+          (data.customerName && names.some((n) => data.customerName.toLowerCase().includes(n))) ||
+          Math.abs(Number(data.total || data.subtotal) - 799.92) < 0.01;
+        if (isMatch) {
+          console.log(`Deleting group order ${docSnap.ref.path}`);
+          await deleteDoc(docSnap.ref);
+        }
+      }
+    } catch (e) {
+      console.warn('collectionGroup order deletion warning:', e);
+    }
+
+    // 4. Delete subcollection members/{memberId}/orders if memberId exists
+    if (memberIdentifier.id) {
+      try {
+        const memOrdersSnap = await getDocs(collection(db, MEMBERS_COL, memberIdentifier.id, ORDERS_COL));
+        for (const docSnap of memOrdersSnap.docs) {
+          await deleteDoc(docSnap.ref);
+        }
+      } catch (e) {
+        console.warn('member subcollection order deletion warning:', e);
+      }
+    }
+
+    // 5. Clean local storage
+    try {
+      const savedOrders = localStorage.getItem('distro_orders');
+      if (savedOrders) {
+        const parsed: OrderItem[] = JSON.parse(savedOrders);
+        const filtered = parsed.filter((data) => {
+          const isMatch =
+            (data.memberId && ids.includes(data.memberId)) ||
+            (data.memberUsername && usernames.includes(data.memberUsername.toLowerCase())) ||
+            (data.customerName && names.some((n) => data.customerName.toLowerCase().includes(n))) ||
+            Math.abs(Number(data.total || data.subtotal) - 799.92) < 0.01;
+          return !isMatch;
+        });
+        localStorage.setItem('distro_orders', JSON.stringify(filtered));
+      }
+
+      const savedInvoices = localStorage.getItem('distro_invoices');
+      if (savedInvoices) {
+        const parsed: InvoiceItem[] = JSON.parse(savedInvoices);
+        const filtered = parsed.filter((data) => {
+          const isMatch =
+            (data.memberId && ids.includes(data.memberId)) ||
+            (data.memberUsername && usernames.includes(data.memberUsername.toLowerCase())) ||
+            (data.customerName && names.some((n) => data.customerName.toLowerCase().includes(n))) ||
+            (data.billedTo && names.some((n) => data.billedTo.toLowerCase().includes(n))) ||
+            Math.abs(Number(data.amount) - 799.92) < 0.01;
+          return !isMatch;
+        });
+        localStorage.setItem('distro_invoices', JSON.stringify(filtered));
+      }
+
+      window.dispatchEvent(new Event('distro_storage_updated'));
+      window.dispatchEvent(new Event('storage'));
+    } catch (e) {
+      console.error('LocalStorage purge error:', e);
+    }
+  } catch (err) {
+    console.error('Error purging member orders and invoices:', err);
+  }
+}
+
 

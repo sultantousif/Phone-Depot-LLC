@@ -12,6 +12,7 @@ import {
 } from '../types';
 import { 
   loadStoredProducts, 
+  saveStoredProducts,
   isProductVisibleToMember, 
   PRODUCTS_UPDATED_EVENT 
 } from '../utils/productUtils';
@@ -65,6 +66,8 @@ import {
   subscribeToPayments,
   subscribeToMembers,
   subscribeToProducts,
+  fetchProductsFromFirestore,
+  saveProductToFirestore,
   saveOrderToFirestore,
   fetchMemberOrdersFromFirestore,
   saveInvoiceToFirestore,
@@ -149,6 +152,16 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
   const [products, setProducts] = useState<ProductItem[]>(() => loadStoredProducts());
 
   useEffect(() => {
+    // 1. Initial direct load from Firestore
+    fetchProductsFromFirestore()
+      .then((loaded) => {
+        if (loaded && loaded.length > 0) {
+          setProducts(loaded);
+          localStorage.setItem('distro_products', JSON.stringify(loaded));
+        }
+      })
+      .catch((err) => console.error('Initial product load from Firestore failed for member:', err));
+
     const handleProductsUpdated = () => {
       setProducts(loadStoredProducts());
     };
@@ -229,26 +242,6 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
       unsubProducts();
     };
   }, []);
-
-  // Fetch orders from Firestore for this member on load and view change
-  useEffect(() => {
-    const memId = currentMemberRecord?.id || user.memberId;
-    if (memId) {
-      fetchMemberOrdersFromFirestore(memId)
-        .then((mOrders) => {
-          if (mOrders && mOrders.length > 0) {
-            setOrders((prev) => {
-              const map = new Map(prev.map((o) => [o.id, o]));
-              mOrders.forEach((o) => map.set(o.id, o));
-              return Array.from(map.values());
-            });
-          }
-        })
-        .catch((err) => {
-          console.error(`Error loading member orders from Firestore for ${memId}:`, err);
-        });
-    }
-  }, [user.memberId, currentMemberRecord?.id, activeView]);
 
   // Save changes to localStorage and Firestore
   const saveOrders = (updatedOrders: OrderItem[]) => {
@@ -507,6 +500,24 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
     const updatedOrders = [newOrder, ...orders];
     saveOrders(updatedOrders);
 
+    // Deduct stock and sync to Firestore
+    const updatedProducts = products.map((p) => {
+      const inCart = cartItemsWithDetails.find((ci) => ci.productId === p.id);
+      if (inCart) {
+        const updatedP = {
+          ...p,
+          stock: Math.max(0, p.stock - inCart.qty),
+        };
+        saveProductToFirestore(updatedP).catch((err) =>
+          console.error(`Error updating product stock for "${p.name}" in Firestore:`, err)
+        );
+        return updatedP;
+      }
+      return p;
+    });
+    setProducts(updatedProducts);
+    saveStoredProducts(updatedProducts);
+
     setOrderCart([]);
     setOrderNotes('');
     setOrderRestrictionAlert(null);
@@ -569,7 +580,9 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
   // Helper to render product grid for shopping
   const renderProductGrid = (categoryKey: string, categoryTitle: string, categoryIcon: React.ReactNode) => {
-    const visibleProducts = products.filter((p) => p.category === categoryKey && isProductVisibleToMember(p, user.username));
+    const visibleProducts = products.filter(
+      (p) => p.category === categoryKey && isProductVisibleToMember(p, user.username, currentMemberRecord?.id || user.memberId)
+    );
 
     return (
       <div className="space-y-6">
@@ -1219,7 +1232,7 @@ export const MemberWorkspace: React.FC<MemberWorkspaceProps> = ({
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {products
-                  .filter((item) => isProductVisibleToMember(item, user.username))
+                  .filter((item) => isProductVisibleToMember(item, user.username, currentMemberRecord?.id || user.memberId))
                   .map((item) => {
                     const inCart = orderCart.find((ci) => ci.productId === item.id);
                     return (

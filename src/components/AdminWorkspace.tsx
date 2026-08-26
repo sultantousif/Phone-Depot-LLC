@@ -94,6 +94,9 @@ import {
   subscribeToPayments,
   subscribeToMembers,
   subscribeToAdmins,
+  subscribeToProducts,
+  fetchProductsFromFirestore,
+  saveProductToFirestore,
   saveOrderToFirestore,
   fetchMemberOrdersFromFirestore,
   fetchAllOrdersFromFirestore,
@@ -102,7 +105,8 @@ import {
   saveMemberToFirestore,
   deleteMemberFromFirestore,
   saveAdminToFirestore,
-  deleteAdminFromFirestore
+  deleteAdminFromFirestore,
+  purgeMemberOrdersAndInvoicesFromFirestore
 } from '../firebase/firestoreService';
 import { PaymentMethodOption } from '../types';
 import { MemberInvitationModal } from './MemberInvitationModal';
@@ -428,16 +432,33 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }
   }, [activeView]);
 
-  // Dynamic Products State (persisted locally with pictures, stock & member-specific visibility)
+  // Dynamic Products State (persisted via shared Firestore collection with pictures, stock & member-specific visibility)
   const [products, setProducts] = useState<ProductItem[]>(() => loadStoredProducts());
 
   useEffect(() => {
+    // 1. Initial direct load from Firestore
+    fetchProductsFromFirestore()
+      .then((loaded) => {
+        if (loaded && loaded.length > 0) {
+          setProducts(loaded);
+          saveStoredProducts(loaded);
+        }
+      })
+      .catch((err) => console.error('Initial product load from Firestore failed in AdminWorkspace:', err));
+
+    // 2. Real-time onSnapshot subscription
+    const unsubProducts = subscribeToProducts((liveProds) => {
+      setProducts(liveProds || []);
+      saveStoredProducts(liveProds || []);
+    });
+
     const handleProductsUpdated = () => {
       setProducts(loadStoredProducts());
     };
     window.addEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
     window.addEventListener('storage', handleProductsUpdated);
     return () => {
+      unsubProducts();
       window.removeEventListener(PRODUCTS_UPDATED_EVENT, handleProductsUpdated);
       window.removeEventListener('storage', handleProductsUpdated);
     };
@@ -477,8 +498,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   // Temporary Credentials Allocation State
   const [allocateTempUsername, setAllocateTempUsername] = useState(false);
   const [tempUsername, setTempUsername] = useState('');
-  const [allocateTempPassword, setAllocateTempPassword] = useState(false);
-  const [tempPassword, setTempPassword] = useState('');
+  const [allocateTempPassword, setAllocateTempPassword] = useState(true);
+  const [tempPassword, setTempPassword] = useState(() => generateCompliantTempPassword('Member'));
   const [showTempPassword, setShowTempPassword] = useState(false);
   const [tempPasswordExpire, setTempPasswordExpire] = useState('7 Days');
   const [requirePasswordReset, setRequirePasswordReset] = useState(true);
@@ -494,7 +515,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
   };
 
   const generateRandomTempPassword = () => {
-    return generateCompliantTempPassword('Metro');
+    return generateCompliantTempPassword('Member');
   };
 
   const handleConfirmSummaryCredentials = () => {
@@ -588,25 +609,6 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       unsubAdmins();
     };
   }, []);
-
-  // Fetch orders from Firestore for the selected member when viewing or switching members/views
-  useEffect(() => {
-    if (selectedMemberId) {
-      fetchMemberOrdersFromFirestore(selectedMemberId)
-        .then((memberOrders) => {
-          if (memberOrders && memberOrders.length > 0) {
-            setOrders((prev) => {
-              const map = new Map(prev.map((o) => [o.id, o]));
-              memberOrders.forEach((o) => map.set(o.id, o));
-              return Array.from(map.values());
-            });
-          }
-        })
-        .catch((err) => {
-          console.error(`Error loading orders for member ${selectedMemberId}:`, err);
-        });
-    }
-  }, [selectedMemberId, activeView]);
 
   // Handler to apply Master Credit Allocation Limit ($0 - $100,000)
   const handleApplyMasterCreditLimit = (newLimit: number, applyToAllExisting: boolean = true) => {
@@ -1066,14 +1068,18 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       localStorage.setItem('distro_orders', JSON.stringify(updatedOrders));
     } catch {}
 
-    // Deduct stock from realtime inventory maintained by Admin
+    // Deduct stock from realtime inventory maintained by Admin and sync to Firestore
     const updatedProducts = products.map((p) => {
       const inOrder = cartItemsWithDetails.find((ci) => ci.productId === p.id);
       if (inOrder) {
-        return {
+        const updatedP = {
           ...p,
           stock: Math.max(0, p.stock - inOrder.qty),
         };
+        saveProductToFirestore(updatedP).catch((err) =>
+          console.error(`Error syncing decremented stock for "${p.name}" to Firestore:`, err)
+        );
+        return updatedP;
       }
       return p;
     });
@@ -1556,11 +1562,11 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       permissions: memberPermissions.length > 0 ? memberPermissions : ['Place Orders'],
       creditAllocation: memberCreditAllocation,
       paymentCycleDays: memberPaymentCycleDays || 14,
-      tempPassword: allocateTempPassword && tempPassword.trim() ? tempPassword.trim() : undefined,
+      tempPassword: tempPassword.trim() || generateCompliantTempPassword('Member'),
       isTempUsername: allocateTempUsername,
-      isTempPassword: allocateTempPassword,
-      tempPasswordExpire: allocateTempPassword ? tempPasswordExpire : undefined,
-      mustResetPassword: allocateTempPassword ? requirePasswordReset : false,
+      isTempPassword: true,
+      tempPasswordExpire: tempPasswordExpire || '7 Days',
+      mustResetPassword: requirePasswordReset,
       invitationSentDate: sendInviteEmail ? new Date().toISOString() : undefined,
     };
 
@@ -1582,7 +1588,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
 
     setMemberFeedback({
       type: 'success',
-      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}"${newMember.tempPassword ? ` | Temp Password: "${newMember.tempPassword}"` : ''} | Business Address: "${fullBusinessAddress}" with a $${memberCreditAllocation.toLocaleString()} credit allocation & ${memberPaymentCycleDays || 14}-day payment cycle.`
+      message: `Member "${newMember.name}" successfully created! Login: "${newMember.username}" | Temp Password: "${newMember.tempPassword}" | Business Address: "${fullBusinessAddress}" with a $${memberCreditAllocation.toLocaleString()} credit allocation & ${memberPaymentCycleDays || 14}-day payment cycle.`
     });
 
     // If "Send email invitation with secure setup link" was checked, immediately open invitation modal
@@ -1591,7 +1597,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       setInviteModalOpen(true);
     }
 
-    // Reset form
+    // Reset form with fresh generated temp password
     setMemberName('');
     setMemberEmail('');
     setMemberUsername('');
@@ -1607,8 +1613,8 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     setMemberPermissions(['Place Orders', 'View Invoices']);
     setAllocateTempUsername(false);
     setTempUsername('');
-    setAllocateTempPassword(false);
-    setTempPassword('');
+    setAllocateTempPassword(true);
+    setTempPassword(generateCompliantTempPassword('Member'));
     setShowTempPassword(false);
 
     // Auto clear feedback after 6 seconds
@@ -1694,6 +1700,10 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
       m.id === id ? { ...m, creditAllocation: newCredit, paymentCycleDays: newPaymentCycleDays } : m
     );
     setMembers(updated);
+    const targetMember = updated.find((m) => m.id === id);
+    if (targetMember) {
+      saveMemberToFirestore(targetMember).catch((err) => console.warn('Firestore member terms update error:', err));
+    }
     try {
       localStorage.setItem('distro_team_members', JSON.stringify(updated));
       window.dispatchEvent(new Event('distro_storage_updated'));
@@ -1703,7 +1713,7 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
     }
     setMemberFeedback({
       type: 'success',
-      message: `Account terms updated successfully: Credit line set to ${newCredit.toLocaleString()} | Payment cycle set to ${newPaymentCycleDays} days.`
+      message: `Account terms updated successfully: Credit line set to $${newCredit.toLocaleString()} | Payment cycle set to ${newPaymentCycleDays} days.`
     });
     setEditingTermsMember(null);
     setTimeout(() => setMemberFeedback(null), 4000);
@@ -3463,14 +3473,43 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                         <td className="p-3.5 text-right space-x-1.5 whitespace-nowrap">
                           <button
                             onClick={() => {
-                              setSelectedInviteMember(m);
+                              let targetMember = { ...m };
+                              if (!targetMember.tempPassword?.trim() && !targetMember.password?.trim()) {
+                                const generated = generateCompliantTempPassword('Member');
+                                targetMember.tempPassword = generated;
+                                targetMember.isTempPassword = true;
+                                targetMember.tempPasswordExpire = targetMember.tempPasswordExpire || '7 Days';
+                                saveMemberToFirestore(targetMember).catch((err) => console.warn('Sync temp password error:', err));
+                                setMembers((prev) => prev.map((item) => item.id === targetMember.id ? targetMember : item));
+                              }
+                              setSelectedInviteMember(targetMember);
                               setInviteModalOpen(true);
                             }}
                             className="px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 rounded transition-colors inline-flex items-center gap-1 cursor-pointer"
-                            title="Send email invitation or copy secure setup link"
+                            title="Send email invitation or copy secure setup link with active temporary password"
                           >
                             <Mail className="w-3 h-3" />
                             <span>Invite</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              const newPass = generateCompliantTempPassword('Member');
+                              const updated: TeamMember = {
+                                ...m,
+                                tempPassword: newPass,
+                                isTempPassword: true,
+                                tempPasswordExpire: m.tempPasswordExpire || '7 Days',
+                              };
+                              setMembers((prev) => prev.map((item) => item.id === updated.id ? updated : item));
+                              saveMemberToFirestore(updated).catch((err) => console.warn('Sync temp password error:', err));
+                              setSelectedInviteMember(updated);
+                              setInviteModalOpen(true);
+                            }}
+                            className="px-2 py-1 text-[11px] font-semibold text-amber-700 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 border border-amber-200/80 rounded transition-colors inline-flex items-center gap-1 cursor-pointer"
+                            title="Generate new temporary password, save to database, and open invitation modal"
+                          >
+                            <Key className="w-3 h-3" />
+                            <span>Reset Pass</span>
                           </button>
                           <button
                             onClick={() => setEditingTermsMember({ 
@@ -3669,27 +3708,59 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                   <button
                     type="button"
-                    onClick={() => setEditingTermsMember(null)}
-                    className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
+                    onClick={async () => {
+                      const creditVal = editingTermsMember.credit || 30000;
+                      const cycleVal = editingTermsMember.paymentCycleDays || 14;
                       handleUpdateMemberTerms(
-                        editingTermsMember.id, 
-                        editingTermsMember.credit, 
-                        editingTermsMember.paymentCycleDays
-                      )
-                    }
-                    className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
+                        editingTermsMember.id,
+                        creditVal,
+                        cycleVal
+                      );
+                      await purgeMemberOrdersAndInvoicesFromFirestore({
+                        id: editingTermsMember.id,
+                        name: editingTermsMember.name,
+                      });
+                      setOrders((prev) => prev.filter((o) => o.memberId !== editingTermsMember.id && !o.customerName?.toLowerCase().includes(editingTermsMember.name.toLowerCase())));
+                      setInvoices((prev) => prev.filter((inv) => inv.memberId !== editingTermsMember.id && !inv.customerName?.toLowerCase().includes(editingTermsMember.name.toLowerCase()) && !inv.billedTo?.toLowerCase().includes(editingTermsMember.name.toLowerCase())));
+                      window.dispatchEvent(new Event('distro_storage_updated'));
+                      window.dispatchEvent(new Event('storage'));
+                      setMemberFeedback({
+                        type: 'success',
+                        message: `Credit balance for ${editingTermsMember.name} has been reset to full $${creditVal.toLocaleString()} available line.`
+                      });
+                    }}
+                    className="px-3 py-2 text-xs font-semibold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+                    title="Purge orphaned test invoices/orders and restore 100% available credit line"
                   >
-                    Save Account Terms
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reset to Full ${editingTermsMember.credit ? editingTermsMember.credit.toLocaleString() : '30,000'}</span>
                   </button>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingTermsMember(null)}
+                      className="px-3.5 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleUpdateMemberTerms(
+                          editingTermsMember.id, 
+                          editingTermsMember.credit, 
+                          editingTermsMember.paymentCycleDays
+                        )
+                      }
+                      className="px-4 py-2 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors shadow-xs"
+                    >
+                      Save Account Terms
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -7748,6 +7819,9 @@ export const AdminWorkspace: React.FC<AdminWorkspaceProps> = ({
         }}
         senderAdminName={user.name || 'Tousif Sultan'}
         onMarkSent={handleMarkInviteSent}
+        onUpdateMember={(updatedMember) => {
+          setMembers((prev) => prev.map((m) => (m.id === updatedMember.id ? updatedMember : m)));
+        }}
       />
     </div>
   );

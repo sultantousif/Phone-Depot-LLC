@@ -26,11 +26,12 @@ export function generateMemberInviteUrl(member: TeamMember): string {
  */
 export function generateMemberInviteEmail(
   member: TeamMember,
-  senderName: string = 'Portal Administrator'
+  senderName: string = 'Portal Administrator',
+  activePassword?: string
 ): { subject: string; body: string } {
   const inviteUrl = generateMemberInviteUrl(member);
   const username = member.tempUsername || member.username;
-  const initialPassword = member.tempPassword || member.password || generateCompliantTempPassword('Member');
+  const initialPassword = activePassword || member.tempPassword || member.password || 'Metro2026!';
   const creditLimit = member.creditAllocation ? `$${member.creditAllocation.toLocaleString()}` : '$10,000';
   const paymentTerms = member.paymentCycleDays ? `${member.paymentCycleDays} Days Net` : '14 Days Net';
   const businessAddress = member.businessAddress || member.storeLocation || 'Authorized Store Location';
@@ -76,10 +77,11 @@ Wholesale Distribution Team
  */
 export function triggerMailtoInvite(
   member: TeamMember,
-  senderName: string = 'Portal Administrator'
+  senderName: string = 'Portal Administrator',
+  activePassword?: string
 ): boolean {
   try {
-    const { subject, body } = generateMemberInviteEmail(member, senderName);
+    const { subject, body } = generateMemberInviteEmail(member, senderName, activePassword);
     const recipient = member.email || '';
     const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     
@@ -104,10 +106,12 @@ export function triggerMailtoInvite(
 export async function sendInvitationViaServer(
   member: TeamMember,
   senderName: string = 'HG World Class Administration',
-  customMessage?: string
+  customMessage?: string,
+  activePassword?: string
 ): Promise<{ success: boolean; message: string; dispatched?: boolean }> {
   try {
     const inviteUrl = generateMemberInviteUrl(member);
+    const resolvedPassword = activePassword || member.tempPassword || member.password || 'Metro2026!';
     const response = await fetch('/api/send-invitation', {
       method: 'POST',
       headers: {
@@ -122,7 +126,7 @@ export async function sendInvitationViaServer(
         token: member.id,
         businessName: member.businessAddress || member.storeLocation || member.name,
         username: member.tempUsername || member.username,
-        password: member.tempPassword || member.password || generateCompliantTempPassword('Member'),
+        password: resolvedPassword,
         creditAllocation: member.creditAllocation,
         paymentCycleDays: member.paymentCycleDays,
       }),
