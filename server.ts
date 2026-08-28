@@ -3,6 +3,8 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import { collection, getDocs } from "firebase/firestore";
+import { db } from "./src/firebase/config";
 
 dotenv.config();
 
@@ -40,6 +42,180 @@ function getMailTransporter() {
 // Health check endpoint
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Resolve username/identifier to email for Firebase Authentication
+app.get("/api/auth/resolve-identifier", async (req, res) => {
+  try {
+    const rawIdentifier = ((req.query.identifier as string) || "").trim();
+    if (!rawIdentifier) {
+      return res.status(400).json({ error: "Identifier query parameter is required" });
+    }
+
+    // Strip leading '@' if present and normalize to lowercase
+    const cleanIdentifier = rawIdentifier.startsWith("@")
+      ? rawIdentifier.slice(1).toLowerCase()
+      : rawIdentifier.toLowerCase();
+
+    // If the input is already an email format, return it directly
+    if (cleanIdentifier.includes("@") && cleanIdentifier.includes(".")) {
+      return res.json({ email: cleanIdentifier });
+    }
+
+    // 1. Search in Firestore members collection (case-insensitive)
+    const membersSnap = await getDocs(collection(db, "members"));
+    for (const docSnap of membersSnap.docs) {
+      const data = docSnap.data();
+      const username = (data.username || "").toLowerCase();
+      const tempUsername = (data.tempUsername || "").toLowerCase();
+      const customId = (data.customIdentifier || "").toLowerCase();
+      const docEmail = (data.email || "").trim().toLowerCase();
+
+      if (
+        (username && username === cleanIdentifier) ||
+        (tempUsername && tempUsername === cleanIdentifier) ||
+        (customId && customId === cleanIdentifier) ||
+        (docEmail && docEmail === cleanIdentifier)
+      ) {
+        if (data.email && data.email.trim()) {
+          return res.json({ email: data.email.trim().toLowerCase() });
+        }
+      }
+    }
+
+    // 2. Search in Firestore admins collection (case-insensitive)
+    const adminsSnap = await getDocs(collection(db, "admins"));
+    for (const docSnap of adminsSnap.docs) {
+      const data = docSnap.data();
+      const username = (data.username || "").toLowerCase();
+      const adminEmail = (data.email || "").trim().toLowerCase();
+
+      if (
+        (username && username === cleanIdentifier) ||
+        (adminEmail && adminEmail === cleanIdentifier)
+      ) {
+        if (data.email && data.email.trim()) {
+          return res.json({ email: data.email.trim().toLowerCase() });
+        }
+      }
+    }
+
+    return res.status(404).json({ error: "Member not found" });
+  } catch (error: any) {
+    console.error("Error resolving identifier:", error);
+    return res.status(500).json({ error: "Failed to resolve identifier" });
+  }
+});
+
+// Admin-only migration endpoint to create Firebase Auth accounts for existing members
+app.post("/api/admin/migrate-members-to-auth", async (req, res) => {
+  const caller = req.headers["x-admin-caller"] || req.body?.adminEmail || "Admin";
+  console.log(`[Auth Migration] Triggered by: ${caller} at ${new Date().toISOString()}`);
+
+  const summary = {
+    created: 0,
+    skipped: 0,
+    failed: 0,
+    details: [] as Array<{ email: string; status: string; reason?: string }>
+  };
+
+  try {
+    const firebaseConfig = (await import("./firebase-applet-config.json", { assert: { type: "json" } })).default;
+    const apiKey = firebaseConfig.apiKey;
+
+    const membersSnap = await getDocs(collection(db, "members"));
+    console.log(`[Auth Migration] Found ${membersSnap.docs.length} member records in Firestore.`);
+
+    for (const docSnap of membersSnap.docs) {
+      const member = docSnap.data();
+      const email = (member.email || "").trim().toLowerCase();
+      const rawPassword = member.password || member.passcode || member.tempPassword;
+
+      if (!email) {
+        console.log(`[Auth Migration] Skipping member ${member.username || docSnap.id} (no email address found)`);
+        summary.skipped++;
+        summary.details.push({
+          email: member.username || docSnap.id,
+          status: "skipped",
+          reason: "No email address found on member record"
+        });
+        continue;
+      }
+
+      if (!rawPassword) {
+        console.log(`[Auth Migration] Skipping member ${email} (no password/passcode found on member record)`);
+        summary.skipped++;
+        summary.details.push({
+          email,
+          status: "skipped",
+          reason: "No password or passcode found on member record"
+        });
+        continue;
+      }
+
+      // Ensure password is at least 6 characters for Firebase Auth requirements
+      const password = String(rawPassword).length >= 6 
+        ? String(rawPassword) 
+        : String(rawPassword).padEnd(6, "0");
+
+      try {
+        // Create user via Firebase Auth REST API (SignUp endpoint)
+        const signUpUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`;
+        const response = await fetch(signUpUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            returnSecureToken: false
+          })
+        });
+
+        const data: any = await response.json();
+
+        if (response.ok) {
+          console.log(`[Auth Migration] Successfully created Firebase Auth account for: ${email}`);
+          summary.created++;
+          summary.details.push({ email, status: "created" });
+        } else {
+          const errorMsg = data?.error?.message || "Unknown error";
+          if (errorMsg.includes("EMAIL_EXISTS")) {
+            console.log(`[Auth Migration] Account already exists for: ${email} (skipping)`);
+            summary.skipped++;
+            summary.details.push({ email, status: "skipped", reason: "Account already exists" });
+          } else {
+            console.error(`[Auth Migration] Failed to create account for: ${email} - ${errorMsg}`);
+            summary.failed++;
+            summary.details.push({ email, status: "failed", reason: errorMsg });
+          }
+        }
+      } catch (memberErr: any) {
+        console.error(`[Auth Migration] Exception creating account for: ${email}`, memberErr);
+        summary.failed++;
+        summary.details.push({ email, status: "failed", reason: memberErr.message || String(memberErr) });
+      }
+    }
+
+    console.log(`[Auth Migration] Migration summary:`, {
+      created: summary.created,
+      skipped: summary.skipped,
+      failed: summary.failed
+    });
+
+    return res.json({
+      created: summary.created,
+      skipped: summary.skipped,
+      failed: summary.failed,
+      message: "Migration complete",
+      details: summary.details
+    });
+  } catch (err: any) {
+    console.error("[Auth Migration] Fatal error during migration:", err);
+    return res.status(500).json({
+      error: "Migration failed",
+      message: err.message || String(err)
+    });
+  }
 });
 
 // SMTP Status / Check endpoint
